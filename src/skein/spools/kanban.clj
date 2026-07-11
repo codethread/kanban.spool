@@ -23,7 +23,8 @@
             [skein.api.vocab.alpha :as vocab]
             [skein.api.weaver.alpha :as weaver]
             [skein.api.format.alpha :as fmt]
-            [skein.api.spool.alpha :refer [attr-get]]))
+            [skein.api.spool.alpha :refer [attr-get]]
+            [skein.spools.devflow :as devflow]))
 
 (def ^:private card-attr :kanban/card)
 (def ^:private status-attr :kanban/status)
@@ -31,6 +32,7 @@
 (def ^:private priority-attr :kanban/priority)
 (def ^:private note-attr :kanban/note)
 (def ^:private task-attr :kanban/task)
+(def ^:private devflow-attr :kanban/devflow)
 
 (def ^:private addable-statuses #{"pending" "refinement"})
 (def ^:private active-lanes #{"refinement" "pending" "claimed" "in_review"})
@@ -282,8 +284,10 @@
 
   `--owner` and `--branch` are mandatory so every claimed card answers who is
   driving it and on which branch; `--worktree` is optional (direct work in the
-  main checkout has no separate worktree). Epics group work and are never
-  claimed themselves."
+  main checkout has no separate worktree). `--devflow` optionally names the
+  card's devflow run (the devflow feature name is the workflow run-id) so
+  `kanban card` can join the run's stage and ready steps. Epics group work and
+  are never claimed themselves."
   [id flags]
   (let [strand (require-status! "claim" (card-strand (require-non-blank! :id id)) "pending")]
     (when (= "epic" (card-type strand))
@@ -294,7 +298,8 @@
           attrs (cond-> {status-attr "claimed"
                          :owner owner
                          :branch branch}
-                  (get flags "--worktree") (assoc :worktree (get flags "--worktree")))
+                  (get flags "--worktree") (assoc :worktree (get flags "--worktree"))
+                  (get flags "--devflow") (assoc devflow-attr (get flags "--devflow")))
           updated (update-card! strand attrs nil)]
       {:operation "kanban claim"
        :card (select-keys updated [:id :title :state :attributes])})))
@@ -538,26 +543,50 @@
                   vec)]
     {:notes notes :work work}))
 
+(defn- devflow-join
+  "Return the card's devflow run projection, or nil for unstamped cards.
+
+  The card names its run through the optional `kanban/devflow` attribute (the
+  devflow feature name is the workflow run-id). A stamped feature whose run has
+  no active devflow root — not started, finished, or archived — projects
+  honestly as a nil `:stage` with no steps rather than being hidden. This is
+  the spool's one devflow seam; kanban never writes devflow state."
+  [card]
+  (when-let [feature (attr-value card devflow-attr)]
+    (let [stage (some-> (devflow/feature-roots feature)
+                        first
+                        (attr-value :devflow/stage))]
+      {:feature feature
+       :stage stage
+       :next-steps (if stage
+                     (mapv #(select-keys % [:id :title :kind :stage :checkpoint])
+                           (devflow/next-steps feature))
+                     [])})))
+
 (defn card-view
   "Return one card joined to its notes, tasks, work, and frontier.
 
   This is the resume entry point: everything an agent needs to continue a
   card lives here. `:tasks` projects the feature card's child tasks with the
-  four derived statuses (empty for cards that carry no task tier)."
+  four derived statuses (empty for cards that carry no task tier), and
+  `:devflow` joins the named devflow run's stage and ready steps for cards
+  stamped with `kanban/devflow`."
   [id]
   (let [rt (current/runtime)
         card (card-strand (require-non-blank! :id id))
         {:keys [notes work]} (card-subtree rt card)
         active-work (filterv #(= "active" (:state %)) work)
         work-ids (set (map :id active-work))
-        ready (filterv #(contains? work-ids (:id %)) (weaver/ready rt))]
-    {:operation "kanban card"
-     :card (select-keys card [:id :title :state :attributes :created_at :updated_at])
-     :tasks (tasks-with-status rt (feature-tasks rt (:id card)))
-     :notes (mapv compact-note notes)
-     :active-work (mapv summarize-strand active-work)
-     :ready (mapv summarize-strand ready)
-     :related (card-relations rt (:id card))}))
+        ready (filterv #(contains? work-ids (:id %)) (weaver/ready rt))
+        devflow (devflow-join card)]
+    (cond-> {:operation "kanban card"
+             :card (select-keys card [:id :title :state :attributes :created_at :updated_at])
+             :tasks (tasks-with-status rt (feature-tasks rt (:id card)))
+             :notes (mapv compact-note notes)
+             :active-work (mapv summarize-strand active-work)
+             :ready (mapv summarize-strand ready)
+             :related (card-relations rt (:id card))}
+      devflow (assoc :devflow devflow))))
 
 ;; ---------------------------------------------------------------------------
 ;; board
@@ -778,6 +807,7 @@
                 priority-attr "p1|p2|p3|p4 (default p3); orders lanes and `kanban next`"
                 note-attr "true on note strands (closed notes-relation children of a card)"
                 task-attr "true on task strands (parent-of children of a feature card; status derived)"
+                devflow-attr "optional devflow run-id; `kanban card` joins the run's stage and ready steps"
                 :kanban/source "optional path or URL for design context"
                 :owner "claimant, required at claim"
                 :branch "work branch, required at claim"
@@ -919,7 +949,8 @@
     "claim" {:doc "Claim a pending feature card."
              :flags {:owner {:doc "Claimant name (required by handler)."}
                      :branch {:doc "Work branch (required by handler)."}
-                     :worktree {:doc "Optional worktree path."}}
+                     :worktree {:doc "Optional worktree path."}
+                     :devflow {:doc "Optional devflow run-id joined by `kanban card`."}}
              :positionals [{:name :id :required? true :doc "Kanban card id."}]}
     "note" {:doc "Append a note as a closed child strand."
             :flags {:author {:doc "Note author."}}
@@ -986,7 +1017,8 @@
                                 :name "kanban"
                                 :owner :skein/spools-kanban
                                 :keys ["kanban/card" "kanban/status" "kanban/type"
-                                       "kanban/priority" "kanban/source" "kanban/task"]
+                                       "kanban/priority" "kanban/source" "kanban/task"
+                                       "kanban/devflow"]
                                 :doc "Kanban card state attributes written by skein.spools.kanban/add!."})
      :ops [(weaver/register-op! rt 'kanban
                              {:doc "Manage the user-facing kanban work board. Run `strand kanban about` for the convention manual."

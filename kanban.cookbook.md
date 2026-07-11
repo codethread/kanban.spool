@@ -7,12 +7,12 @@ This is the **how/why** half of the kanban docs. The other two halves are:
 - [`kanban.md`](./kanban.md) — the **contract**: the board model, the lanes and
   priority ladder, the `kanban/*` attribute vocabulary, and the CLI op surface.
   Read it for what the board guarantees.
-- [`kanban.api.md`](./kanban.api.md) — the **generated reference**: every public
-  fn's signature, arity, and docstring, produced from the source.
+- [`src/skein/spools/kanban.clj`](./src/skein/spools/kanban.clj) — every public
+  fn's signature, arity, and docstring.
 
-Division of truth: signatures and the attribute table live in the contract and the generated API doc; narrative and composition live here. This cookbook never restates a signature or the lane/attribute table — it links to them.
+Division of truth: signatures live in the source docstrings and the attribute table lives in the contract; narrative and composition live here. This cookbook never restates a signature or the lane/attribute table — it links to them.
 
-The kanban CLI is JSON-only, so every recipe below is a `strand kanban …` shell flow. The REPL fns behind each verb (and the ASCII `print-board!` human view) are in the API doc; run `strand kanban prime` for the live, spool-authored working discipline these recipes distil.
+The kanban CLI is JSON-only, so every recipe below is a `strand kanban …` shell flow. The REPL fns behind each verb (and the ASCII `print-board!` human view) are documented in the source docstrings; run `strand kanban prime` for the live, spool-authored working discipline these recipes distil.
 
 ## How to read a recipe
 
@@ -24,7 +24,7 @@ Every recipe has the same four parts, so you can skim to the one that matches yo
 4. **Why this shape** — the reasoning: why each stamp is there, what it buys a
    later agent, and what skipping it would cost.
 
-Each recipe cites the honest source it was distilled from — the spool source, this repo's own conventions, or `test/skein/kanban_test.clj`, which drives every documented behaviour against a real weaver runtime and doubles as the executable proof for these flows.
+Each recipe cites the honest source it was distilled from — the spool source, this repo's own conventions, or `test/skein/spools/kanban_test.clj`, which drives every documented behaviour against a real weaver runtime and doubles as the executable proof for these flows.
 
 ---
 
@@ -279,8 +279,8 @@ Honest source: `needs-review-entries` / `board` in the spool source, the `:stayi
 
 - [`kanban.md`](./kanban.md) — the contract: the board model, the lane and
   priority ladder, the `kanban/*` attribute table, and the CLI op surface.
-- [`kanban.api.md`](./kanban.api.md) — generated signatures and docstrings for
-  every verb and helper referenced above.
+- [`src/skein/spools/kanban.clj`](./src/skein/spools/kanban.clj) — signatures
+  and docstrings for every verb and helper referenced above.
 - `strand kanban prime` — the live, spool-authored working discipline (working
   agreement, pick-up flow, note-as-you-go/resume-from-task contract, adjacent-work awareness,
   branch visibility). The single source these recipes distil.

@@ -1,12 +1,12 @@
 # Kanban spool
 
 > This is the **contract** doc: the board model, the lanes and priority ladder,
-> the `kanban/*` attribute vocabulary, and the CLI op surface. Its two companions
-> are [`kanban.cookbook.md`](./kanban.cookbook.md) — worked composition recipes
-> (how/why you run work through the board) — and [`kanban.api.md`](./kanban.api.md)
-> — generated fn signatures and docstrings. Reach for the cookbook when you want a
-> runnable flow, the API doc when you want an exact signature, and this doc for
-> what the board guarantees.
+> the `kanban/*` attribute vocabulary, and the CLI op surface. Its companion is
+> [`kanban.cookbook.md`](./kanban.cookbook.md) — worked composition recipes
+> (how/why you run work through the board). Exact signatures live in the source
+> docstrings ([`src/skein/spools/kanban.clj`](./src/skein/spools/kanban.clj)).
+> Reach for the cookbook when you want a runnable flow, and this doc for what
+> the board guarantees.
 
 The kanban spool is the user-facing work board held entirely in Skein strands. It tracks **user↔agent** work: everything a user asks for becomes a `feature` card (occasionally grouped under an `epic`), and every agent working directly with a user works under a claimed card. It complements — never replaces — the execution strands that hang beneath cards.
 
@@ -38,6 +38,7 @@ Card state lives under the `kanban/*` attribute topic:
 | `kanban/source` | Optional path or URL for design context (RFC, feature folder). |
 | `kanban/note` | `"true"` decoration on strands linked to a card by the blessed `notes` relation. |
 | `kanban/task` | `"true"` on task strands: `parent-of` children of a feature card whose status is derived, never stored. |
+| `kanban/devflow` | Optional devflow run-id (the devflow feature name); `kanban card` joins the run's stage and ready steps. |
 | `owner` | Who is driving the work; required at claim. |
 | `branch` | The work branch; required at claim. |
 | `worktree` | Optional worktree path. |
@@ -93,7 +94,7 @@ strand kanban card <id>
 strand kanban next
 strand kanban priority <id> <p1|p2|p3|p4>
 strand kanban promote <id>
-strand kanban claim <id> --owner <name> --branch <branch> [--worktree /path]
+strand kanban claim <id> --owner <name> --branch <branch> [--worktree /path] [--devflow <run-id>]
 strand kanban note <id> <text> [--author <name>]
 strand kanban task add <feature> <title> [--body "Longer context"] [--depends-on <id> ...]
 strand kanban task list <feature>
@@ -106,7 +107,7 @@ strand kanban finish <id> [--outcome done|abandoned]
 
 `board` returns the grouped snapshot (epics, refinement/pending/claimed/in_review lanes sorted p1-first then oldest, closed count); active cards with a status outside the known lanes surface in `unknown-status` rather than being hidden. It also returns `needs-review`: a vector aggregated across claimed and in-review feature cards of `{:card :item}` entries (plus `:branch` from the claim stamp), one per card descendant that is active, in the engine ready frontier, and marks human review (`hitl`/`workflow/hitl` true, or `kind` `review`), sorted by card id then item id — the always-present cross-card review queue. `next` returns the highest-priority (p1 first) oldest active pending feature (epics are never served). `priority` restamps an active card's `kanban/priority` and fails loudly on unknown values or closed cards. `promote` is the explicit human command that moves a refinement card into the pending lane. `claim` fails loudly without `--owner` and `--branch` and refuses epics; `--worktree` is optional for direct work in the main checkout. `review` moves a claimed card to `in_review`; `rework` moves it back to `claimed`; `finish` closes a claimed or in-review card with the outcome status.
 
-`card` returns the resume view (card, tasks with derived statuses, notes, active work, ready frontier) plus `related`: a vector of `{:relation :strand}` entries for every `depends-on` edge touching the card — `depends-on` when the card is the dependent, `depended-on-by` when it is the dependency — sorted by other-endpoint id. `task add` hangs a task under a feature card (marker attr plus `parent-of`, optional `--depends-on` edges) and `task list` projects that card's tasks with their derived statuses (see the Task tier section); both fail loudly on a missing, non-card, or non-feature target — epics group features and never own tasks directly.
+`card` returns the resume view (card, tasks with derived statuses, notes, active work, ready frontier) plus `related`: a vector of `{:relation :strand}` entries for every `depends-on` edge touching the card — `depends-on` when the card is the dependent, `depended-on-by` when it is the dependency — sorted by other-endpoint id. Cards stamped with `kanban/devflow` (via `claim --devflow`) also carry `devflow`: the named run's current stage and its ready steps (see [Devflow dependency](#devflow-dependency)). `task add` hangs a task under a feature card (marker attr plus `parent-of`, optional `--depends-on` edges) and `task list` projects that card's tasks with their derived statuses (see the Task tier section); both fail loudly on a missing, non-card, or non-feature target — epics group features and never own tasks directly.
 
 For bulk authoring, the `kanban-batch` weave pattern creates pending feature cards with bodies and `depends-on` edges atomically:
 
@@ -123,6 +124,27 @@ printf "(do (require 'skein.spools.kanban) (skein.spools.kanban/print-board!))\n
 ```
 
 `print-board!` prints a stacked-lane ASCII board (epics, refinement, pending, claimed and in_review with owner/branch and doing-task, needs-review); `board-str` is the pure renderer over the `board` result for reuse.
+
+## Devflow dependency
+
+Kanban requires [`skein.spools.devflow`](https://github.com/codethread/devflow.spool) in exactly
+one seam: the `kanban card` view. A card optionally names its devflow run through the
+`kanban/devflow` attribute (`claim --devflow <run-id>` stamps it; the devflow feature name is the
+workflow run-id), and `card` then joins:
+
+```json
+"devflow": {"feature": "widgets-run",
+            "stage": "intake",
+            "next-steps": [{"id": "...", "title": "...", "kind": "step", "stage": "intake"}]}
+```
+
+A stamped card whose run has no active devflow root — not started, finished, or archived —
+projects a `null` stage with no steps rather than hiding the key. Kanban only reads devflow
+state; it never writes it, and devflow never depends on kanban.
+
+The dependency is deliberately one-way and one-seam. Consumers approve the devflow spool as its
+own `spools.edn` coordinate and activate it before kanban; the [README](./README.md) carries the
+full recipe.
 
 ## Queries
 

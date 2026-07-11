@@ -9,6 +9,7 @@
             [skein.api.weaver.alpha :as weaver]
             [skein.api.format.alpha :as fmt]
             [skein.core.weaver.runtime :as weaver-runtime]
+            [skein.spools.devflow :as devflow]
             [skein.spools.kanban :as kanban]
             [skein.test.alpha :as t]))
 
@@ -475,6 +476,31 @@
           (testing "board-str renders the doing-task line"
             (let [rendered ((requiring-resolve 'skein.spools.kanban/board-str) (op! rt "board"))]
               (is (str/includes? rendered "doing: Wire the thing")))))))))
+
+(deftest kanban-card-view-joins-the-devflow-run
+  ;; The spool's one devflow seam: a card stamped with kanban/devflow (claim
+  ;; --devflow) projects the named run's stage and ready steps in card view.
+  (with-kanban
+    (fn [rt]
+      (let [card-id (get-in (op! rt "add" "Devflow-tracked feature") [:card :id])
+            plain-id (get-in (op! rt "add" "Untracked feature") [:card :id])]
+        (testing "claim --devflow stamps the run-id on the card"
+          (let [claimed (op! rt "claim" card-id "--owner" "agent" "--branch" "widgets"
+                             "--devflow" "widgets-run")]
+            (is (= "widgets-run" (get-in claimed [:card :attributes :kanban/devflow])))))
+        (testing "a stamped card with no active devflow root projects honestly"
+          (is (= {:feature "widgets-run" :stage nil :next-steps []}
+                 (:devflow (op! rt "card" card-id)))))
+        (testing "a started run joins its stage and ready steps"
+          (devflow/install!)
+          (devflow/start! "widgets-run")
+          (let [{:keys [feature stage next-steps]} (:devflow (op! rt "card" card-id))]
+            (is (= "widgets-run" feature))
+            (is (= "intake" stage))
+            (is (seq next-steps))
+            (is (every? #(and (:id %) (:title %) (:kind %)) next-steps))))
+        (testing "an unstamped card carries no :devflow key"
+          (is (not (contains? (op! rt "card" plain-id) :devflow))))))))
 
 (deftest kanban-batch-weave-creates-cards-and-dependencies
   (with-kanban
