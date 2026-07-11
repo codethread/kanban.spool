@@ -1,0 +1,16 @@
+# Clojure / tools.deps
+.cpcache/
+.clj-kondo/.cache/
+.lsp/.cache/
+target/
+classes/
+pom.xml.asc
+*.jar
+.nrepl-port
+.rebel_readline_history
+
+# Editors / OS
+.calva/
+*.iml
+.idea/
+.DS_Store

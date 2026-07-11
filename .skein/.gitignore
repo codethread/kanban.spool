@@ -1,0 +1,8 @@
+config.local.json
+init.local.clj
+spools.local.edn
+state/
+data/
+weaver.*
+*.sqlite
+*.sqlite-*
