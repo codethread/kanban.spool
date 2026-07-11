@@ -577,11 +577,29 @@
           (is (= [{:from_strand_id (:id child) :to_strand_id (:id dep) :edge_type "depends-on"}]
                  (:depends-on-edges result))))))))
 
-(deftest kanban-export-unknown-id-throws
+(deftest kanban-export-enforces-the-card-contract
   (with-kanban
     (fn [rt]
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"card not found"
-                            (export! rt "missing-id"))))))
+      (testing "an unknown id fails loudly"
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"strand not found"
+                              (export! rt "missing-id"))))
+      (testing "a known strand that is not a kanban card fails loudly"
+        ;; regression: the op once exported any existing strand's subtree
+        ;; instead of enforcing its documented feature-or-epic-card contract
+        (let [plain (weaver/add rt {:title "Not a card"})]
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not a kanban card"
+                                (export! rt (:id plain)))))))))
+
+(deftest kanban-claim-rejects-a-blank-devflow-run-id
+  (with-kanban
+    (fn [rt]
+      (let [id (get-in (op! rt "add" "Blank devflow guard") [:card :id])]
+        ;; regression: a blank --devflow once stamped an empty run-id that later
+        ;; rendered as the same honest nil-stage shape as a real unstarted run
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"devflow must be a non-blank string"
+                              (op! rt "claim" id "--owner" "agent" "--branch" "b" "--devflow" "")))
+        (is (= "pending" (get-in (weaver/show rt id) [:attributes :kanban/status]))
+            "the failed claim must not have moved the card")))))
 
 (defn -main
   "Run the standalone kanban.spool test suite."

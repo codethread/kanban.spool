@@ -75,7 +75,29 @@ if (res.code !== 0) {
   console.error((res.err || res.out).trim());
   process.exit(1);
 }
-const data = JSON.parse(res.out) as Export;
+// Fail at the seam if the op's payload shape drifted from this renderer's Export
+// type, instead of surfacing later as undefined fields in the rendered board.
+function assertExport(raw: unknown): Export {
+  const d = raw as Record<string, unknown>;
+  const bad =
+    typeof d !== "object" || d === null
+      ? "payload is not an object"
+      : typeof d["root-id"] !== "string"
+        ? "root-id missing"
+        : !Array.isArray(d["strands"])
+          ? "strands missing"
+          : !Array.isArray(d["parent-of-edges"])
+            ? "parent-of-edges missing"
+            : !Array.isArray(d["depends-on-edges"])
+              ? "depends-on-edges missing"
+              : null;
+  if (bad) {
+    console.error(`unexpected kanban-export payload (${bad}); the op and this renderer have drifted`);
+    process.exit(1);
+  }
+  return raw as Export;
+}
+const data = assertExport(JSON.parse(res.out));
 
 // ── Model ────────────────────────────────────────────────────────────────────
 const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);

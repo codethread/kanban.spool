@@ -299,7 +299,8 @@
                          :owner owner
                          :branch branch}
                   (get flags "--worktree") (assoc :worktree (get flags "--worktree"))
-                  (get flags "--devflow") (assoc devflow-attr (get flags "--devflow")))
+                  (get flags "--devflow") (assoc devflow-attr
+                                                 (require-non-blank! :devflow (get flags "--devflow"))))
           updated (update-card! strand attrs nil)]
       {:operation "kanban claim"
        :card (select-keys updated [:id :title :state :attributes])})))
@@ -1043,14 +1044,12 @@
   rollup live in the consumer (this spool's scripts/kanban-export). The existing
   `subgraph` op walks one relation at a time, so this op exists to bundle the
   hierarchy and its dependencies in a single call. Fails loudly when the id is
-  unknown."
+  unknown or names a strand that is not a kanban card."
   [ctx]
   (let [{:keys [card-id]} (:op/args ctx)
         rt (current/runtime)
-        card (weaver/show rt card-id)]
-    (when-not card
-      (throw (ex-info "kanban-export card not found" {:card-id card-id})))
-    (let [{:keys [strands edges]} (graph/subgraph rt [card-id] {:type "parent-of"})
+        card (card-strand card-id)]
+    (let [{:keys [strands edges]} (graph/subgraph rt [(:id card)] {:type "parent-of"})
           id-set (set (map :id strands))
           depends (:edges (graph/subgraph rt (vec id-set) {:type "depends-on"}))]
       {:operation "kanban-export"

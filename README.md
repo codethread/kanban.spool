@@ -99,7 +99,7 @@ Keep kanban's `:after [:devflow]` and both coordinates in its `:spools` guard:
 the namespace requires `skein.spools.devflow`, so devflow's approved source
 must be synced before kanban loads.
 
-`install!` registers the `kanban` op, the `kanban-batch` weave pattern, the
+`install!` registers the `kanban` and `kanban-export` ops, the `kanban-batch` weave pattern, the
 `kanban-cards`/`kanban-unstarted` queries, and declares the `kanban/*`
 attribute namespace.
 
