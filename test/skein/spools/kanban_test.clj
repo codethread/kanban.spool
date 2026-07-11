@@ -30,6 +30,9 @@
 (defn- op! [rt & argv]
   (weaver/op! rt 'kanban argv))
 
+(defn- export! [rt & argv]
+  (weaver/op! rt 'kanban-export argv))
+
 (deftest install-declares-kanban-attr-namespace
   (with-kanban
     (fn [rt]
@@ -545,6 +548,40 @@
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"target strand not found"
                             (patterns/weave! rt :kanban-batch
                                              {:items [{:key "x" :title "X" :deps ["missing-strand"]}]}))))))
+
+(deftest install-registers-kanban-export-op
+  (with-kanban
+    (fn [rt]
+      (is (some #(= "kanban-export" (:name %)) (weaver/ops rt))))))
+
+(deftest kanban-export-returns-subtree-with-internal-edges
+  (with-kanban
+    (fn [rt]
+      (let [root-id (get-in (op! rt "add" "Export me") [:card :id])
+            child (weaver/add rt {:title "Child work" :attributes {:kind "task"}})
+            dep (weaver/add rt {:title "Dependency" :attributes {:kind "task"}})]
+        (weaver/update rt root-id {:edges [{:type "parent-of" :to (:id child)}
+                                           {:type "parent-of" :to (:id dep)}]})
+        (weaver/update rt (:id child) {:edges [{:type "depends-on" :to (:id dep)}]})
+        (weaver/update rt (:id dep) {:state "closed"})
+        (let [result (export! rt root-id)
+              strand-ids (set (map :id (:strands result)))]
+          (is (= "kanban-export" (:operation result)))
+          (is (= root-id (:root-id result)))
+          (is (= #{root-id (:id child) (:id dep)} strand-ids)
+              "closed strands stay in the export payload")
+          (is (some #(= "closed" (:state %)) (:strands result)))
+          (is (= #{{:from_strand_id root-id :to_strand_id (:id child) :edge_type "parent-of"}
+                   {:from_strand_id root-id :to_strand_id (:id dep) :edge_type "parent-of"}}
+                 (set (:parent-of-edges result))))
+          (is (= [{:from_strand_id (:id child) :to_strand_id (:id dep) :edge_type "depends-on"}]
+                 (:depends-on-edges result))))))))
+
+(deftest kanban-export-unknown-id-throws
+  (with-kanban
+    (fn [rt]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"card not found"
+                            (export! rt "missing-id"))))))
 
 (defn -main
   "Run the standalone kanban.spool test suite."

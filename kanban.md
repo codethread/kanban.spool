@@ -125,6 +125,18 @@ printf "(do (require 'skein.spools.kanban) (skein.spools.kanban/print-board!))\n
 
 `print-board!` prints a stacked-lane ASCII board (epics, refinement, pending, claimed and in_review with owner/branch and doing-task, needs-review); `board-str` is the pure renderer over the `board` result for reuse.
 
+## Offline export
+
+Install also registers `kanban-export`, a read-only op that bundles one card's full `parent-of` subtree plus its internal `depends-on` edges in a single call:
+
+```sh
+strand kanban-export <card-id>
+```
+
+It returns the root, every strand beneath it via `parent-of` (all lifecycle states, so closed work still counts), the `parent-of` hierarchy edges, and the `depends-on` edges internal to that subtree. It is a pure graph projection — presentation and the progress rollup live in the consumer.
+
+[`scripts/kanban-export/kanban-export.ts`](./scripts/kanban-export/kanban-export.ts) is that consumer: a dependency-free Bun renderer that turns the export payload into a single self-contained HTML file with an overall progress rollup and a per-child breakdown. `make kanban-export ID=<card-id> [ARGS='--open']` runs it directly; `make kanban-serve ID=<card-id> [PORT=8000]` exports to `/tmp/kanban-export` and serves it over the LAN.
+
 ## Devflow dependency
 
 Kanban requires [`skein.spools.devflow`](https://github.com/codethread/devflow.spool) in exactly

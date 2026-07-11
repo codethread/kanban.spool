@@ -16,6 +16,10 @@ recipes live in [kanban.cookbook.md](./kanban.cookbook.md). At runtime,
 `strand kanban about` the terse command manual — both authored in the spool, so
 they cannot drift from the installed surface.
 
+`kanban-export` plus the bun renderer in [scripts/kanban-export](./scripts/kanban-export)
+render a card's subtree to a standalone HTML file offline (see kanban.md's
+[Offline export](./kanban.md#offline-export) section).
+
 ## Prerequisites
 
 - A Skein checkout/runtime providing the blessed `skein.api.*.alpha` surface.

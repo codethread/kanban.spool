@@ -14,3 +14,7 @@ pom.xml.asc
 *.iml
 .idea/
 .DS_Store
+
+scripts/kanban-export/node_modules/
+# kanban-export writes to /tmp by default; ignore any local --out overrides too
+/kanban-*.html

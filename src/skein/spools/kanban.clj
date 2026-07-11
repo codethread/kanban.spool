@@ -1007,6 +1007,67 @@
       "note" (note! (:id args) (str/join " " (:text args)) flags)
       "finish" (finish! (:id args) flags))))
 
+;; ---------------------------------------------------------------------------
+;; kanban-export: a card's full parent-of subtree for offline rendering
+;; ---------------------------------------------------------------------------
+
+(defn- export-strand
+  "Compact strand shape for the export payload, timestamps included.
+
+  Unlike loom's active-only `summarize`, this keeps closed strands and their
+  created/updated stamps so a consumer can show completed work and age."
+  [strand]
+  (select-keys strand [:id :title :state :attributes :created_at :updated_at]))
+
+(defn- internal-edges
+  "Return edges whose endpoints both sit in id-set, projected and sorted.
+
+  Subgraph expansion walks outward to strands beyond the subtree, so edges are
+  filtered against the subtree's own id set to keep the projection
+  self-contained (mirrors loom's internal-edge discipline)."
+  [id-set edges]
+  (->> edges
+       (filter #(and (contains? id-set (:from_strand_id %))
+                     (contains? id-set (:to_strand_id %))))
+       (sort-by (juxt :from_strand_id :to_strand_id :edge_type))
+       (mapv #(select-keys % [:from_strand_id :to_strand_id :edge_type]))))
+
+(defn kanban-export-op
+  "Handle `strand kanban-export <card-id>`: a card's full parent-of subtree
+  with its internal depends-on edges.
+
+  Given a feature or epic card id, returns the root, every strand beneath it via
+  parent-of (all lifecycle states, so completed work still counts toward
+  progress), the parent-of hierarchy edges, and the depends-on edges internal to
+  the subtree. It is a read-only graph projection: presentation and the progress
+  rollup live in the consumer (this spool's scripts/kanban-export). The existing
+  `subgraph` op walks one relation at a time, so this op exists to bundle the
+  hierarchy and its dependencies in a single call. Fails loudly when the id is
+  unknown."
+  [ctx]
+  (let [{:keys [card-id]} (:op/args ctx)
+        rt (current/runtime)
+        card (weaver/show rt card-id)]
+    (when-not card
+      (throw (ex-info "kanban-export card not found" {:card-id card-id})))
+    (let [{:keys [strands edges]} (graph/subgraph rt [card-id] {:type "parent-of"})
+          id-set (set (map :id strands))
+          depends (:edges (graph/subgraph rt (vec id-set) {:type "depends-on"}))]
+      {:operation "kanban-export"
+       :root-id card-id
+       :strands (mapv export-strand strands)
+       :parent-of-edges (internal-edges id-set edges)
+       :depends-on-edges (internal-edges id-set depends)})))
+
+(def ^:private kanban-export-arg-spec
+  "Declared command surface for the `kanban-export` op."
+  {:op "kanban-export"
+   :doc "Show a card's parent-of subtree with internal depends-on edges."
+   :positionals [{:name :card-id
+                  :type :string
+                  :required? true
+                  :doc "Feature or epic card strand id."}]})
+
 (defn install!
   "Install the kanban op, batch pattern, and board queries into the active weaver."
   []
@@ -1024,7 +1085,12 @@
                              {:doc "Manage the user-facing kanban work board. Run `strand kanban about` for the convention manual."
                               :arg-spec kanban-arg-spec
                               :hook-class :mutating}
-                             'skein.spools.kanban/kanban-op)]
+                             'skein.spools.kanban/kanban-op)
+           (weaver/register-op! rt 'kanban-export
+                             {:doc "Return a card's full parent-of subtree with its internal depends-on edges."
+                              :arg-spec kanban-export-arg-spec
+                              :hook-class :read}
+                             'skein.spools.kanban/kanban-export-op)]
      :pattern (patterns/register-pattern! rt 'kanban-batch
                                           "Create pending feature cards with bodies and depends-on edges."
                                           'skein.spools.kanban/kanban-batch
