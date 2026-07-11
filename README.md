@@ -37,13 +37,16 @@ This spool declares no Maven dependencies of its own.
 ## Dependency information
 
 Approve every source spool explicitly; no prerequisite is fetched
-transitively. Kanban's one spool prerequisite is devflow, which in turn builds
-on the `skein.spools.workflow` namespace shipped by Skein.
+transitively. Kanban's one spool prerequisite is devflow, which in turn
+requires `skein.spools.workflow` — one of Skein's in-repo reference spools,
+living in a spool root (`<skein>/spools/workflow`) **off** the base classpath,
+so it needs its own approved coordinate too.
 
 Shared workspace example:
 
 ```clojure
-{:spools {codethread/devflow {:git/url "git@github.com:codethread/devflow.spool.git"
+{:spools {skein.spools/workflow {:local/root "/path/to/your/skein/spools/workflow"}
+          codethread/devflow {:git/url "git@github.com:codethread/devflow.spool.git"
                               :git/sha "<40-hex-sha-for-the-approved-commit>"}
           codethread/kanban {:git/url "git@github.com:codethread/kanban.spool.git"
                              :git/sha "<40-hex-sha-for-the-approved-commit>"}}}
@@ -61,9 +64,10 @@ encoded in a manifest.
 
 ## Activation
 
-Activate prerequisites before dependents: workflow (shipped with Skein), then
-devflow, then kanban. The consumer owns the runtime, calls `sync!`, and
-activates each module explicitly from trusted `init.clj` or REPL code.
+Activate prerequisites before dependents — workflow, then devflow, then
+kanban — and always `sync!` before any `:spools`-guarded `use!`: synced
+approved roots are what activation loads from. The consumer owns the runtime
+and activates each module explicitly from trusted `init.clj` or REPL code.
 
 ```clojure
 (require '[skein.api.current.alpha :as current]
@@ -71,12 +75,15 @@ activates each module explicitly from trusted `init.clj` or REPL code.
 
 (def runtime (current/runtime))
 
+(runtime/sync! runtime)
+
+;; workflow is an approved spool root, not base-classpath code: guard the
+;; activation on its coordinate so a missing/unsynced approval fails loudly.
 (runtime/use! runtime
   :workflow
   {:ns 'skein.spools.workflow
+   :spools [skein.spools/workflow]
    :required? true})
-
-(runtime/sync! runtime)
 
 (runtime/use! runtime
   :devflow
