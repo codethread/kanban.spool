@@ -4,7 +4,7 @@
 > the `kanban/*` attribute vocabulary, and the CLI op surface. Its companion is
 > [`kanban.cookbook.md`](./kanban.cookbook.md) — worked composition recipes
 > (how/why you run work through the board). Exact signatures live in the source
-> docstrings ([`src/skein/spools/kanban.clj`](./src/skein/spools/kanban.clj)).
+> docstrings ([`src/ct/spools/kanban.clj`](./src/ct/spools/kanban.clj)).
 > Reach for the cookbook when you want a runnable flow, and this doc for what
 > the board guarantees.
 
@@ -134,7 +134,7 @@ strand weave --pattern kanban-batch --input '{"items":[{"key":"design","title":"
 The CLI stays JSON-only (TEN-006); the human rendering lives on the REPL surface:
 
 ```sh
-printf "(do (require 'skein.spools.kanban) (skein.spools.kanban/print-board!))\n" | mill weaver repl --stdin
+printf "(do (require 'ct.spools.kanban) (ct.spools.kanban/print-board!))\n" | mill weaver repl --stdin
 ```
 
 `print-board!` prints a stacked-lane ASCII board (epics, refinement, pending, claimed and in_review with owner/branch and doing-task, needs-review); `board-str` is the pure renderer over the `board` result for reuse.
@@ -177,9 +177,9 @@ reload — `install!` never binds a default):
 
 A malformed binding is rejected loudly (unknown keys, a blank name, or a `:project` that is
 neither a fully-qualified symbol nor a function). The owning Clojure specs are
-`:skein.spools.kanban/tracker-binding` for the binding,
-`:skein.spools.kanban/tracker-projection` for the strategy result, and
-`:skein.spools.kanban/tracker-view` for the public card-view shape. A projection must contain
+`:ct.spools.kanban/tracker-binding` for the binding,
+`:ct.spools.kanban/tracker-projection` for the strategy result, and
+`:ct.spools.kanban/tracker-view` for the public card-view shape. A projection must contain
 exactly `:status` and `:next-steps`; every step must be a map with non-blank `:id`, `:title`, and
 `:kind`. Malformed status values, missing keys, non-vector steps, and invalid step entries fail with
 the tracker name and run id in the error data. Kanban also validates the constructed public view,
@@ -208,7 +208,7 @@ An unstamped card carries no `tracker` key at all. Kanban only reads tracker sta
 writes it.
 
 **Worked example: the devflow adapter.** A repo that stages work through
-[`skein.spools.devflow`](https://github.com/codethread/devflow.spool) binds a small trusted-config
+[`ct.spools.devflow`](https://github.com/codethread/devflow.spool) binds a small trusted-config
 module (roughly fifteen lines) that composes devflow's read fns into the projection shape:
 
 ```clojure

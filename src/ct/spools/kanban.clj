@@ -1,4 +1,4 @@
-(ns skein.spools.kanban
+(ns ct.spools.kanban
   "User-facing kanban board over Skein strands.
 
   Cards are the user<->agent tracking surface: everything a user asks for is a
@@ -1103,7 +1103,7 @@
               {:verb "review" :purpose "Move a claimed card into in_review."}
               {:verb "rework" :purpose "Move an in_review card back to claimed."}
               {:verb "finish" :purpose "Close a card with an explicit outcome."}
-              {:repl "skein.spools.kanban/print-board!" :purpose "ASCII board from mill weaver repl; CLI output stays JSON-only."}]
+              {:repl "ct.spools.kanban/print-board!" :purpose "ASCII board from mill weaver repl; CLI output stays JSON-only."}]
    :patterns [{:name "kanban-batch"
                :input {:items [{:key "slug"
                                 :title "Feature title"
@@ -1347,27 +1347,27 @@
   []
   (let [rt (current/runtime)]
     {:installed true
-     :namespace 'skein.spools.kanban
+     :namespace 'ct.spools.kanban
      :vocab (vocab/declare! rt {:kind :attr-namespace
                                 :name "kanban"
                                 :owner :skein/spools-kanban
                                 :keys ["kanban/card" "kanban/status" "kanban/type"
                                        "kanban/priority" "kanban/source" "kanban/task"
                                        "kanban/run" "kanban/devflow"]
-                                :doc "Kanban card state attributes written by skein.spools.kanban/add!."})
+                                :doc "Kanban card state attributes written by ct.spools.kanban/add!."})
      :ops [(weaver/register-op! rt 'kanban
                                 {:doc "Manage the user-facing kanban work board. Run `strand kanban about` for the convention manual."
                                  :arg-spec kanban-arg-spec
                                  :hook-class :mutating}
-                                'skein.spools.kanban/kanban-op)
+                                'ct.spools.kanban/kanban-op)
            (weaver/register-op! rt 'kanban-export
                                 {:doc "Return a card's full parent-of subtree with its internal depends-on edges."
                                  :arg-spec kanban-export-arg-spec
                                  :hook-class :read}
-                                'skein.spools.kanban/kanban-export-op)]
+                                'ct.spools.kanban/kanban-export-op)]
      :pattern (patterns/register-pattern! rt 'kanban-batch
                                           "Create pending feature cards with bodies and depends-on edges."
-                                          'skein.spools.kanban/kanban-batch
+                                          'ct.spools.kanban/kanban-batch
                                           ::kanban-batch-input)
      :queries [(graph/register-query! rt 'kanban-cards [:= [:attr "kanban/card"] "true"])
                (graph/register-query! rt 'kanban-unstarted

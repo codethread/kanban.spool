@@ -1,6 +1,6 @@
 # kanban.spool
 
-`skein.spools.kanban` provides the user-facing kanban work board for
+`ct.spools.kanban` provides the user-facing kanban work board for
 [Skein](https://github.com/codethread/skein) as a git-distributed spool:
 feature/epic cards, refinement/pending/claimed/in_review lanes, a derived-status
 task tier, notes, and the `strand kanban` CLI op.
@@ -85,8 +85,8 @@ activate first:
 (runtime/use! runtime
   :kanban
   {:spools ['codethread/kanban]
-   :ns 'skein.spools.kanban
-   :call 'skein.spools.kanban/install!
+   :ns 'ct.spools.kanban
+   :call 'ct.spools.kanban/install!
    :required? true})
 ```
 
@@ -113,8 +113,8 @@ its workflow prerequisite, then binds a small trusted-config adapter:
 (runtime/use! runtime
   :devflow
   {:spools ['codethread/devflow]
-   :ns 'skein.spools.devflow
-   :call 'skein.spools.devflow/install!
+   :ns 'ct.spools.devflow
+   :call 'ct.spools.devflow/install!
    :after [:workflow]
    :required? true})
 

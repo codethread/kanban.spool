@@ -1,4 +1,4 @@
-(ns skein.spools.kanban-test
+(ns ct.spools.kanban-test
   "Tests for the kanban board spool against a disposable weaver runtime."
   (:require [clojure.set :as set]
             [clojure.string :as str]
@@ -9,7 +9,7 @@
             [skein.api.weaver.alpha :as weaver]
             [skein.api.format.alpha :as fmt]
             [skein.core.weaver.runtime :as weaver-runtime]
-            [skein.spools.kanban :as kanban]
+            [ct.spools.kanban :as kanban]
             [skein.test.alpha :as t]))
 
 (defn stub-projection
@@ -435,7 +435,7 @@
             _idea (op! rt "add" long-title "--status" "refinement")
             working-id (get-in (op! rt "add" "Working card") [:card :id])]
         (op! rt "claim" working-id "--owner" "agent-a" "--branch" "feature-x")
-        (let [rendered ((requiring-resolve 'skein.spools.kanban/board-str) (op! rt "board"))
+        (let [rendered ((requiring-resolve 'ct.spools.kanban/board-str) (op! rt "board"))
               lines (str/split-lines rendered)]
           (is (str/includes? rendered "REFINEMENT (1)"))
           (is (str/includes? rendered "PENDING (0)"))
@@ -554,7 +554,7 @@
             (let [reviewing (some #(when (= feature-id (:id %)) %) (:in_review (op! rt "board")))]
               (is (= "Wire the thing" (get-in reviewing [:doing-task :title])))))
           (testing "board-str renders the doing-task line"
-            (let [rendered ((requiring-resolve 'skein.spools.kanban/board-str) (op! rt "board"))]
+            (let [rendered ((requiring-resolve 'ct.spools.kanban/board-str) (op! rt "board"))]
               (is (str/includes? rendered "doing: Wire the thing")))))))))
 
 (deftest kanban-card-view-joins-the-bound-tracker
@@ -624,7 +624,7 @@
     (fn [rt]
       (let [card-id (get-in (op! rt "add" "Symbol-tracked feature") [:card :id])]
         (op! rt "claim" card-id "--owner" "agent" "--branch" "widgets" "--run" "widgets-run")
-        (kanban/set-tracker! {:name "stub" :project 'skein.spools.kanban-test/stub-projection})
+        (kanban/set-tracker! {:name "stub" :project 'ct.spools.kanban-test/stub-projection})
         (let [{:keys [name status next-steps]} (:tracker (op! rt "card" card-id))]
           (is (= "stub" name))
           (is (= "spec" status))
@@ -804,5 +804,5 @@
 (defn -main
   "Run the standalone kanban.spool test suite."
   [& _args]
-  (let [summary (clojure.test/run-tests 'skein.spools.kanban-test)]
+  (let [summary (clojure.test/run-tests 'ct.spools.kanban-test)]
     (System/exit (if (pos? (+ (:fail summary) (:error summary))) 1 0))))
