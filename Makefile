@@ -1,4 +1,17 @@
-.PHONY: kanban-export kanban-serve
+.PHONY: fmt fmt-check lint test kanban-export kanban-serve
+
+fmt:
+	clojure -M:format/fix
+
+fmt-check:
+	clojure -M:format
+
+lint:
+	clojure -M:lint/clj-kondo
+	clojure -M:lint/splint
+
+test:
+	clojure -M:test
 
 # Standalone HTML export of a feature/epic card subtree; polls the strand CLI.
 # Pass the card id as ID and any extra flags (--out, --workspace, --open) as ARGS,

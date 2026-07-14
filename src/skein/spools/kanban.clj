@@ -162,7 +162,7 @@
       (throw (ex-info "kanban epics cannot nest under other epics" {:epic epic-id})))
     (let [epic (some-> epic-id epic-strand)
           strand (weaver/add rt {:title title
-                              :attributes (card-attributes flags)})]
+                                 :attributes (card-attributes flags)})]
       (when epic
         (weaver/update rt (:id epic) {:edges [{:type "parent-of" :to (:id strand)}]}))
       (cond-> {:operation "kanban add"
@@ -257,9 +257,9 @@
   strand, so callers still see every attribute in the result."
   [strand attrs state]
   (weaver/update (current/runtime)
-              (:id strand)
-              (cond-> {:attributes attrs}
-                state (assoc :state state))))
+                 (:id strand)
+                 (cond-> {:attributes attrs}
+                   state (assoc :state state))))
 
 (defn promote!
   "Move a refinement card into the pending lane (an explicit human act)."
@@ -464,9 +464,9 @@
         rt (current/runtime)
         deps (get flags "--depends-on")
         task (weaver/add rt {:title title
-                          :attributes (cond-> {task-attr "true"
-                                               :kind "task"}
-                                        (get flags "--body") (assoc :body (get flags "--body")))})]
+                             :attributes (cond-> {task-attr "true"
+                                                  :kind "task"}
+                                           (get flags "--body") (assoc :body (get flags "--body")))})]
     (weaver/update rt (:id feature) {:edges [{:type "parent-of" :to (:id task)}]})
     (when (seq deps)
       (weaver/update rt (:id task) {:edges (mapv (fn [dep] {:type "depends-on" :to dep}) deps)}))
@@ -840,7 +840,7 @@
 (defn board-str
   "Render a `board` result map as a stacked-lane ASCII board string."
   [{:keys [epics refinement pending claimed in_review needs-review closed unknown-status]}]
-  (let [rule (apply str (repeat board-width \=))]
+  (let [rule (str/join (repeat board-width \=))]
     (->> (concat
           [(str "KANBAN BOARD  (closed: " (:count closed) ")") rule]
           (lane-lines "EPICS" epics card-line)
@@ -1136,15 +1136,15 @@
   [ctx]
   (let [{:keys [card-id]} (:op/args ctx)
         rt (current/runtime)
-        card (card-strand card-id)]
-    (let [{:keys [strands edges]} (graph/subgraph rt [(:id card)] {:type "parent-of"})
-          id-set (set (map :id strands))
-          depends (:edges (graph/subgraph rt (vec id-set) {:type "depends-on"}))]
-      {:operation "kanban-export"
-       :root-id card-id
-       :strands (mapv export-strand strands)
-       :parent-of-edges (internal-edges id-set edges)
-       :depends-on-edges (internal-edges id-set depends)})))
+        card (card-strand card-id)
+        {:keys [strands edges]} (graph/subgraph rt [(:id card)] {:type "parent-of"})
+        id-set (set (map :id strands))
+        depends (:edges (graph/subgraph rt (vec id-set) {:type "depends-on"}))]
+    {:operation "kanban-export"
+     :root-id card-id
+     :strands (mapv export-strand strands)
+     :parent-of-edges (internal-edges id-set edges)
+     :depends-on-edges (internal-edges id-set depends)}))
 
 (def ^:private kanban-export-arg-spec
   "Declared command surface for the `kanban-export` op."
@@ -1169,22 +1169,22 @@
                                        "kanban/devflow"]
                                 :doc "Kanban card state attributes written by skein.spools.kanban/add!."})
      :ops [(weaver/register-op! rt 'kanban
-                             {:doc "Manage the user-facing kanban work board. Run `strand kanban about` for the convention manual."
-                              :arg-spec kanban-arg-spec
-                              :hook-class :mutating}
-                             'skein.spools.kanban/kanban-op)
+                                {:doc "Manage the user-facing kanban work board. Run `strand kanban about` for the convention manual."
+                                 :arg-spec kanban-arg-spec
+                                 :hook-class :mutating}
+                                'skein.spools.kanban/kanban-op)
            (weaver/register-op! rt 'kanban-export
-                             {:doc "Return a card's full parent-of subtree with its internal depends-on edges."
-                              :arg-spec kanban-export-arg-spec
-                              :hook-class :read}
-                             'skein.spools.kanban/kanban-export-op)]
+                                {:doc "Return a card's full parent-of subtree with its internal depends-on edges."
+                                 :arg-spec kanban-export-arg-spec
+                                 :hook-class :read}
+                                'skein.spools.kanban/kanban-export-op)]
      :pattern (patterns/register-pattern! rt 'kanban-batch
                                           "Create pending feature cards with bodies and depends-on edges."
                                           'skein.spools.kanban/kanban-batch
                                           ::kanban-batch-input)
      :queries [(graph/register-query! rt 'kanban-cards [:= [:attr "kanban/card"] "true"])
                (graph/register-query! rt 'kanban-unstarted
-                                    [:and
-                                     [:= :state "active"]
-                                     [:= [:attr "kanban/card"] "true"]
-                                     [:= [:attr "kanban/status"] "pending"]])]}))
+                                      [:and
+                                       [:= :state "active"]
+                                       [:= [:attr "kanban/card"] "true"]
+                                       [:= [:attr "kanban/status"] "pending"]])]}))

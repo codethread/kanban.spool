@@ -1,0 +1,23 @@
+{:output {:format "clj-kondo"}
+ :parallel true
+ :silent false
+
+ ;; Clojure 1.12 method-value syntax (`^[] String/toUpperCase`, `Class/.instanceMethod`)
+ ;; is an opt-in stylistic migration, not a defect: the codebase deliberately and
+ ;; uniformly uses traditional interop, splint's own autocorrect cannot resolve the
+ ;; receiver class (it emits a literal `CLASS` placeholder for instance calls), and the
+ ;; rewrite would demand hand-authored `^[..]` param-tags at every one of ~500 call
+ ;; sites. Adjudicated off; revisit only as a deliberate whole-repo modernisation.
+ lint/prefer-method-values {:enabled false}
+
+ ;; Skein is a long-lived daemon (weaver) that dynamically loads and resolves trusted
+ ;; spool/config code. Every `(catch Throwable ...)` here is a deliberate boundary that
+ ;; MUST see Errors too: dynamic `requiring-resolve`/`load-file`/EDN reads that wrap any
+ ;; failure (incl. LinkageError/NoClassDefFoundError) in diagnostic ex-info and rethrow;
+ ;; resilience nets on long-lived loops/threads (scheduler dispatch, event system) that
+ ;; must never let one tick kill the runtime clock; cleanup handlers that `addSuppressed`
+ ;; and rethrow the original; and process-boundary exit handlers. All 33 sites were
+ ;; audited as load-bearing (narrowing to Exception would silently drop Error handling);
+ ;; splint itself ships this rule `:safe false`, calling out mission-critical processes.
+ ;; New lazy catches are caught by change review, not this rule. Adjudicated off.
+ lint/catch-throwable {:enabled false}}

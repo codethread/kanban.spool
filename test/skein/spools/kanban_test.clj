@@ -22,10 +22,12 @@
   devflow.spool standalone suite uses. kanban ships on this repo's src
   classpath, so install! runs directly against the bound runtime."
   [f]
-  (t/with-weaver-world [ctx {:storage :sqlite-memory}]
-    (weaver-runtime/with-runtime-binding (:runtime ctx)
-      #(do (kanban/install!)
-           (f (:runtime ctx))))))
+  (t/run-with-weaver-world
+   {:storage :sqlite-memory}
+   (fn [ctx]
+     (weaver-runtime/with-runtime-binding (:runtime ctx)
+       #(do (kanban/install!)
+            (f (:runtime ctx)))))))
 
 (defn- op! [rt & argv]
   (weaver/op! rt 'kanban argv))
@@ -327,7 +329,7 @@
     (fn [rt]
       (let [feature-id (get-in (op! rt "add" "Dump-resistant feature") [:card :id])
             task-id (get-in (op! rt "task" "add" feature-id "Reviewed task") [:task :id])
-            dump (apply str (repeat 700 "x"))]
+            dump (str/join (repeat 700 "x"))]
         (op! rt "note" feature-id "Short and intact")
         (op! rt "note" feature-id dump "--kind" "review-dump")
         (op! rt "note" task-id dump)
