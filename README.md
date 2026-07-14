@@ -82,12 +82,12 @@ and activates each module explicitly from trusted `init.clj` or REPL code.
 (runtime/use! runtime
   :workflow
   {:ns 'skein.spools.workflow
-   :spools [skein.spools/workflow]
+   :spools ['skein.spools/workflow]
    :required? true})
 
 (runtime/use! runtime
   :devflow
-  {:spools [codethread/devflow]
+  {:spools ['codethread/devflow]
    :ns 'skein.spools.devflow
    :call 'skein.spools.devflow/install!
    :after [:workflow]
@@ -95,7 +95,7 @@ and activates each module explicitly from trusted `init.clj` or REPL code.
 
 (runtime/use! runtime
   :kanban
-  {:spools [codethread/kanban codethread/devflow]
+  {:spools ['codethread/kanban 'codethread/devflow]
    :ns 'skein.spools.kanban
    :call 'skein.spools.kanban/install!
    :after [:devflow]
