@@ -47,9 +47,13 @@ docs=$(strand kanban task add "$card" "Write the docs" --depends-on "$impl" | jq
 strand update "$impl" --attr owner=claude   # owned + deps met = the doing-task
 
 # 4. Note the doing-task as you reach decisions and progress, not at the end.
-strand kanban note "$impl" "Chose lane names over statuses because X" --author claude --kind decision
-strand kanban note "$impl" --author claude \
-  "Done: impl + tests. Next: docs. Validation: clojure -M:test green. Gotcha: reload the weaver after merge."
+strand kanban note "$impl" "Chose lane names over statuses because X" --by claude --kind decision
+strand --stdin kanban note "$impl" :stdin --by claude --kind activity <<'NOTE'
+Done: impl + tests.
+Next: docs.
+Validation: clojure -M:test green.
+Gotcha: reload the weaver after merge.
+NOTE
 
 # 5. Move it through review. Rework returns it to claimed when needed.
 strand kanban review "$card"
@@ -57,7 +61,7 @@ strand kanban rework "$card"
 strand kanban review "$card"
 
 # 6. Close it once the work has landed, with a lean handover note on the card.
-strand kanban note "$card" "Handover: landed as <sha>; docs follow-up card filed" --author claude --kind summary
+strand kanban note "$card" "Handover: landed as <sha>; docs follow-up card filed" --by claude --kind summary
 strand kanban finish "$card" --outcome done
 ```
 

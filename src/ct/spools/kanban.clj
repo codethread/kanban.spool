@@ -558,13 +558,12 @@
         rt (current/runtime)
         decorating (cond-> {note-attr "true"
                             :kind "note"}
-                     (get flags "--author") (assoc :author (get flags "--author"))
+                     (get flags "--by") (assoc :author (get flags "--by"))
                      (get flags "--kind") (assoc :note/kind
                                                  (require-non-blank! :kind (get flags "--kind"))))
         {note-id :id} (notes/note! rt (:id target) text decorating)
         note (weaver/show rt note-id)
-        result {:operation "kanban note"
-                :note (select-keys note [:id :title :state :attributes])}]
+        result {:note (select-keys note [:id :title :state :attributes])}]
     (if (= "true" (attr-value target card-attr))
       (assoc result :card (:id target))
       (let [card (owning-card rt target)]
@@ -1046,8 +1045,7 @@
 (defn about
   "Return the kanban convention and installed helper surface."
   []
-  {:operation "kanban about"
-   :summary "Kanban cards are the user<->agent work board; agents working directly with a user work under a claimed card."
+  {:summary "Kanban cards are the user<->agent work board; agents working directly with a user work under a claimed card."
    :lanes {:refinement "not actionable until an explicit human `kanban promote`"
            :pending "actionable queue; `kanban next` serves the highest-priority (p1 first) oldest feature"
            :claimed "work started; owner/branch (and worktree) stamped at claim"
@@ -1079,13 +1077,15 @@
                  |under it with parent-of. Kanban complements the engines that produce them; it never
                  |tracks their runs directly.")
    :note-discipline (fmt/reflow "
-                      |Note as you go, on the doing-TASK: `kanban note <task-id> \"...\" --author
+                      |Note as you go, on the doing-TASK: `kanban note <task-id> \"...\" --by
                       |<name> [--kind activity|decision|review-dump|summary]` records each
                       |significant decision, step, and gotcha while the work is fresh, and
                       |surfaces as that task's `latest-note`. Card notes stay lean handover
                       |summaries; bulk content (review findings, pasted output) belongs on a task
-                      |note — views clip note bodies past a cap. A cold agent resumes from the
-                      |doing-task and its `latest-note` via `kanban board` -> `kanban card <id>`.")
+                      |note via `strand --stdin kanban note <task-id> :stdin --by <name> --kind
+                      |review-dump` — views clip note bodies past a cap. A cold agent resumes from
+                      |the doing-task and its `latest-note` via `kanban board` -> `kanban card
+                      |<id>`.")
    :discovery {:help "strand help kanban"
                :prime "strand kanban prime"
                :batch-pattern "strand pattern explain kanban-batch"}
@@ -1122,7 +1122,6 @@
   visibility that an agent needs before touching the board."
   []
   (assoc (about)
-         :operation "kanban prime"
          :working-agreement
          (fmt/fill "
                |Every user request is a feature card; occasionally group related cards under an
@@ -1157,15 +1156,16 @@
                |merge, archive, or explicit abandonment.")
          :note-discipline
          (fmt/fill "
-               |Note as you go, on the doing-TASK: `kanban note <task-id> \"...\" --author
+               |Note as you go, on the doing-TASK: `kanban note <task-id> \"...\" --by
                |<name>` records each significant decision, step, and gotcha while the work is
                |fresh — do not save it for a stopping point. Task notes surface as that task's
                |`latest-note`; the card's own note trail stays a lean handover summary.
                |
                |Bulk content never goes on the card: review findings, pasted command output,
-               |and long dumps belong on a task note, stamped with their view hint (`--kind
-               |review-dump`, or activity|decision|summary). Views clip note bodies past a
-               |cap; `strand show <note-id>` returns the full text.
+               |and long dumps belong on a task note via `strand --stdin kanban note <task-id>
+               |:stdin --by <name> --kind review-dump`. Other view hints are
+               |activity|decision|summary. Views clip note bodies past a cap; `strand show
+               |<note-id>` returns the full text.
                |
                |Tasks are the resume point. A cold agent resumes from the doing-task and its
                |`latest-note`: `kanban board` shows claimed and in-review cards with their
@@ -1228,7 +1228,7 @@
                      :devflow {:doc "Deprecated alias for --run (stamps kanban/run)."}}
              :positionals [{:name :id :required? true :doc "Kanban card id."}]}
     "note" {:doc "Append a note to a card or task; note the doing-task as you go."
-            :flags {:author {:doc "Note author."}
+            :flags {:by {:doc "Note author."}
                     :kind {:doc "Open note/kind view hint: activity, decision, review-dump, summary."}}
             :positionals [{:name :id :required? true :doc "Kanban card or task id."}
                           {:name :text

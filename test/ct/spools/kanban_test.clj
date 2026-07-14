@@ -143,7 +143,7 @@
     (fn [rt]
       (let [prime (op! rt "prime")
             about (op! rt "about")]
-        (is (= "kanban prime" (:operation prime)))
+        (is (not (contains? (kanban/prime) :operation)))
         (testing "prime reuses about's command/lane/attribute surface"
           (is (= (:commands about) (:commands prime)))
           (is (= (:lanes about) (:lanes prime)))
@@ -275,10 +275,10 @@
           (weaver/update rt card-id {:edges [{:type "parent-of" :to (:id task)}
                                              {:type "parent-of" :to (:id review)}]})
           (weaver/update rt (:id review) {:edges [{:type "depends-on" :to (:id task)}]})
-          (op! rt "note" card-id "Decided to keep lane names" "--author" "agent-a")
+          (op! rt "note" card-id "Decided to keep lane names" "--by" "agent-a")
           (op! rt "note" card-id
                "Done: impl. Next: review. Validation: tests green."
-               "--author" "agent-a")
+               "--by" "agent-a")
           (testing "card view joins notes newest-first, work, and frontier"
             (let [view (op! rt "card" card-id)]
               (is (= card-id (get-in view [:card :id])))
@@ -296,7 +296,10 @@
                                   (op! rt "note" (:id task) "text")))
             (let [missing-text (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Missing required argument text"
                                                      (op! rt "note" card-id)))]
-              (is (= :missing-required (:reason (ex-data missing-text)))))))))))
+              (is (= :missing-required (:reason (ex-data missing-text)))))
+            (let [removed-author (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown flag --author"
+                                                       (op! rt "note" card-id "text" "--author" "agent-a")))]
+              (is (= :unknown-flag (:reason (ex-data removed-author)))))))))))
 
 (deftest kanban-note-targets-tasks-and-stamps-kind
   (with-kanban
@@ -305,9 +308,10 @@
             task-id (get-in (op! rt "task" "add" feature-id "Wire the thing") [:task :id])]
         (testing "a task note reports the task and its owning card"
           (let [noted (op! rt "note" task-id "Done: wiring. Next: tests."
-                           "--author" "agent-a" "--kind" "activity")]
+                           "--by" "agent-a" "--kind" "activity")]
             (is (= task-id (:task noted)))
             (is (= feature-id (:card noted)))
+            (is (= "agent-a" (get-in noted [:note :attributes :author])))
             (is (= "activity" (get-in noted [:note :attributes :note/kind])))
             (is (= "true" (get-in noted [:note :attributes :kanban/note])))))
         (testing "the newest task note surfaces as :latest-note in every task projection"

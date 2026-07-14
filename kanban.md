@@ -74,8 +74,18 @@ read-merge-write cycle, and every note keeps its own timestamp and author.
 A note targets a **card or a task** — anything else fails loudly. Progress notes belong on the doing-task; the card's own trail stays a lean handover summary. Bulk content (review findings, pasted output) always goes on a task note:
 
 ```sh
-strand kanban note <task-id> "Decided X because Y" --author claude --kind decision
-strand kanban note <card-id> "Handover: impl landed, docs next" --author claude
+strand kanban note <task-id> "Decided X because Y" --by claude --kind decision
+strand kanban note <card-id> "Handover: impl landed, docs next" --by claude
+
+# Read long or code-bearing text from stdin.
+strand --stdin kanban note <task-id> :stdin --by claude --kind review-dump <<'NOTE'
+Review findings:
+- The parser rejects the removed flag.
+- Stored attribution remains under `author`.
+NOTE
+
+# Or resolve a named payload from a file.
+strand --payload review=review-findings.md kanban note <task-id> :payload/review --by claude --kind review-dump
 ```
 
 Note as you go, not at the end: record what is done, what is next, validation state, and gotchas on the doing-task as you reach them. Each task projection (`card <id>`, `task list`, the board's doing-task) carries the task's newest note as `latest-note`, so a cold agent resumes from the doing-task and its `latest-note` with no prior context. Even with no notes the doing-task still carries its body, deps, and lane:
@@ -101,7 +111,7 @@ strand kanban next
 strand kanban priority <id> <p1|p2|p3|p4>
 strand kanban promote <id>
 strand kanban claim <id> --owner <name> --branch <branch> [--worktree /path] [--run <run-id>]
-strand kanban note <card-or-task-id> <text> [--author <name>] [--kind activity|decision|review-dump|summary]
+strand kanban note <card-or-task-id> <text> [--by <name>] [--kind activity|decision|review-dump|summary]
 strand kanban task add <feature> <title> [--body "Longer context"] [--depends-on <id> ...]
 strand kanban task list <feature>
 strand kanban review <id>
