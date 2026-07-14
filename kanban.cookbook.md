@@ -32,7 +32,7 @@ Each recipe cites the honest source it was distilled from — the spool source, 
 
 **Situation.** You're an agent sitting down to work with a user. There's a queue of pending features; you need to take the right one, make the work discoverable to everyone else, and leave it resumable if you're interrupted.
 
-**Composition.** The usual loop is `next`, `claim`, work under `parent-of`, and `note` as you go. When the work is ready for review, run `review`. If review asks for changes, run `rework`; when the work has landed, `finish` closes it out.
+**Composition.** The usual loop is `next`, `claim`, `task add` to slice the work, and `note` the doing-task as you go. When the work is ready for review, run `review`. If review asks for changes, run `rework`; when the work has landed, `finish` closes it out.
 
 ```sh
 # 1. Take the highest-priority (p1 first) oldest pending feature.
@@ -41,10 +41,14 @@ card=$(strand kanban next | jq -r '.next.id')
 # 2. Claim it — owner and branch are mandatory; worktree is optional.
 strand kanban claim "$card" --owner claude --branch kanban-spool --worktree /path/to/wt
 
-# 3. Do the work under the card (see the parent-of recipe below), noting
-#    decisions and progress as you reach them, not at the end.
-strand kanban note "$card" "Chose lane names over statuses because X" --author claude
-strand kanban note "$card" --author claude \
+# 3. Decompose into tasks; the depends-on edges are the concurrency DAG.
+impl=$(strand kanban task add "$card" "Implement the ops" | jq -r '.task.id')
+docs=$(strand kanban task add "$card" "Write the docs" --depends-on "$impl" | jq -r '.task.id')
+strand update "$impl" --attr owner=claude   # owned + deps met = the doing-task
+
+# 4. Note the doing-task as you reach decisions and progress, not at the end.
+strand kanban note "$impl" "Chose lane names over statuses because X" --author claude --kind decision
+strand kanban note "$impl" --author claude \
   "Done: impl + tests. Next: docs. Validation: clojure -M:test green. Gotcha: reload the weaver after merge."
 
 # 5. Move it through review. Rework returns it to claimed when needed.
@@ -52,7 +56,8 @@ strand kanban review "$card"
 strand kanban rework "$card"
 strand kanban review "$card"
 
-# 6. Close it once the work has landed.
+# 6. Close it once the work has landed, with a lean handover note on the card.
+strand kanban note "$card" "Handover: landed as <sha>; docs follow-up card filed" --author claude --kind summary
 strand kanban finish "$card" --outcome done
 ```
 
@@ -72,10 +77,19 @@ strand kanban finish "$card" --outcome done
 - **The card is the audit root, not a status field.** Claiming moves the card to
   the `claimed` lane and `next` stops serving it, so two agents can't both pull
   the same feature.
-- **Note as you go is the interruption contract.** A crash, a context limit, or a
-  handoff to another agent all resolve the same way: whoever picks up reads the
-  doing-task and its latest note. Writing progress *as* you work, not after, is
-  the whole point — the resume point exists before you stop.
+- **Tasks make the resume point exist at all.** The claim says who owns the
+  feature; the task tier says where inside it the work stands. Skip the
+  decomposition and the board's doing-task signal, the derived-status DAG, and
+  the note target all vanish — which is exactly how review dumps end up on the
+  card (contract [Task tier](./kanban.md#task-tier)).
+- **Note the doing-task as you go — that is the interruption contract.** A
+  crash, a context limit, or a handoff to another agent all resolve the same
+  way: whoever picks up reads the doing-task and its `latest-note`. Writing
+  progress *as* you work, not after, is the whole point — the resume point
+  exists before you stop. Card notes stay lean handover summaries; bulk content
+  (review findings, pasted output) goes on a task note, and views clip note
+  bodies past a cap so no single dump drowns the card
+  (contract [Notes and resume](./kanban.md#notes-and-resume)).
 - **`review` and `rework` keep review visible.** `review` moves the card to
   `in_review`, so board readers can see work waiting on review. `rework` moves it
   back to `claimed` when the branch needs changes.
@@ -213,11 +227,12 @@ strand kanban card "$card"          # tasks, notes, active work, ready frontier,
 **Why this shape.**
 
 - **The task tier is the resume point.** The doing-task carries its body, deps,
-  and lane, and its latest note records what's done, what's next, the validation
-  state, and gotchas — so the resume path needs no prior conversation. The
-  cold-start read is `board` → `card` → doing-task and its latest note; even with
-  no notes the doing-task alone tells you where the work stands (`card-view`;
-  contract [Notes and resume](./kanban.md#notes-and-resume)).
+  and lane, and its `latest-note` — surfaced inline on every task projection —
+  records what's done, what's next, the validation state, and gotchas, so the
+  resume path needs no prior conversation and no extra note query. The
+  cold-start read is `board` → `card` → doing-task and its `latest-note`; even
+  with no notes the doing-task alone tells you where the work stands
+  (`card-view`; contract [Notes and resume](./kanban.md#notes-and-resume)).
 - **Notes are closed child strands, not an attribute.** Each note keeps its own
   timestamp and author, and concurrent agents appending notes never race a
   read-merge-write cycle on one attribute. That's why two agents can both leave

@@ -1,6 +1,6 @@
 # Clojure / tools.deps
 .cpcache/
-.clj-kondo/.cache/
+.clj-kondo/
 .lsp/.cache/
 target/
 classes/

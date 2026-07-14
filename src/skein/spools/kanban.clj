@@ -11,9 +11,11 @@
 
   Cards are work roots: claiming stamps `owner`/`branch`/`worktree`, and
   execution strands hang beneath the card with `parent-of` edges — the kanban
-  spool complements the engines that produce them, it does not replace them. Notes are closed child note strands, so a cold agent can
-  self-discover in-flight work: `kanban board` -> `kanban card <id>` ->
-  the doing-task and its latest note."
+  spool complements the engines that produce them, it does not replace them.
+  Notes are closed note strands on cards and tasks; progress notes belong on
+  the doing-task, so a cold agent self-discovers in-flight work with
+  `kanban board` -> `kanban card <id>` -> the doing-task and its
+  `latest-note`."
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [skein.api.current.alpha :as current]
@@ -337,6 +339,51 @@
        :card (select-keys updated [:id :title :state :attributes])})))
 
 ;; ---------------------------------------------------------------------------
+;; note compaction: shared by the notes, task, and card projections
+;; ---------------------------------------------------------------------------
+
+(def ^:private note-body-cap
+  "Length past which card/task views clip a note body.
+
+  Sized to keep whole activity and decision notes intact while folding bulk
+  content (review dumps, pasted output) that would otherwise drown the resume
+  read; `strand show <note-id>` always returns the full text."
+  600)
+
+(defn- compact-note
+  "Return the compact note shape used in card and task output.
+
+  Bodies past `note-body-cap` are clipped and marked `:truncated true`; the
+  full text stays on the note strand (`strand show <note-id>`). Carries the
+  open `note/kind` view hint as `:kind` when the note is stamped with one."
+  [strand]
+  (let [body (attr-value strand :note/text)
+        clipped? (and (string? body) (> (count body) note-body-cap))]
+    (cond-> {:id (:id strand)
+             :title (:title strand)
+             :body (if clipped? (str (subs body 0 note-body-cap) " …") body)
+             :created_at (:created_at strand)}
+      clipped? (assoc :truncated true)
+      (attr-value strand :author) (assoc :author (attr-value strand :author))
+      (attr-value strand :note/kind) (assoc :kind (attr-value strand :note/kind)))))
+
+(defn- latest-notes-by-target
+  "Return {target-strand-id compact-newest-note} for the given strand ids.
+
+  One batched incoming-`notes` read across every id; the newest note per
+  target wins, ordered by note/at, then created_at, then id."
+  [rt ids]
+  (if (seq ids)
+    (let [edges (graph/incoming-edges rt ids "notes")
+          target-by-note (into {} (map (juxt :from_strand_id :to_strand_id)) edges)]
+      (->> (graph/strands-by-ids rt (vec (keys target-by-note)))
+           (sort-by (juxt #(attr-value % :note/at) :created_at :id))
+           (reduce (fn [m note]
+                     (assoc m (target-by-note (:id note)) (compact-note note)))
+                   {})))
+    {}))
+
+;; ---------------------------------------------------------------------------
 ;; task tier: execution strands under a feature card
 ;; ---------------------------------------------------------------------------
 
@@ -381,11 +428,13 @@
     (attr-value strand :body) (assoc :body (attr-value strand :body))))
 
 (defn- tasks-with-status
-  "Return compact tasks decorated with their derived status.
+  "Return compact tasks decorated with their derived status and newest note.
 
-  Batches the `depends-on` frontier: one edge lookup across every task, one
-  state lookup across every dependency, so status derives without a per-task
-  round trip."
+  Batches the `depends-on` frontier and the incoming `notes` reads: one edge
+  lookup across every task, one state lookup across every dependency, one
+  note sweep — so the projection derives without a per-task round trip.
+  `:latest-note` (compact, body-clipped) is the doing-task resume read; tasks
+  with no notes simply omit it."
   [rt tasks]
   (let [dep-edges (graph/outgoing-edges rt (mapv :id tasks) "depends-on")
         target-state (into {}
@@ -393,12 +442,14 @@
                            (graph/strands-by-ids rt (into [] (map :to_strand_id) dep-edges)))
         deps-by-task (reduce (fn [m {:keys [from_strand_id to_strand_id]}]
                                (update m from_strand_id (fnil conj []) to_strand_id))
-                             {} dep-edges)]
+                             {} dep-edges)
+        latest-note (latest-notes-by-target rt (mapv :id tasks))]
     (mapv (fn [task]
-            (assoc (compact-task task)
-                   :status (derive-task-status
-                            task
-                            (map target-state (get deps-by-task (:id task))))))
+            (cond-> (assoc (compact-task task)
+                           :status (derive-task-status
+                                    task
+                                    (map target-state (get deps-by-task (:id task)))))
+              (latest-note (:id task)) (assoc :latest-note (latest-note (:id task)))))
           tasks)))
 
 (defn task-add!
@@ -445,35 +496,59 @@
 ;; notes
 ;; ---------------------------------------------------------------------------
 
+(defn- note-target
+  "Return id's kanban card or task strand, failing loudly for anything else.
+
+  Notes target the work tier only: progress notes belong on the doing-task
+  (the resume read) and card notes stay a lean handover trail. Any other
+  strand is a wrong target."
+  [id]
+  (let [strand (or (weaver/show (current/runtime) id)
+                   (throw (ex-info "Kanban strand not found" {:id id})))]
+    (when-not (or (= "true" (attr-value strand card-attr))
+                  (= "true" (attr-value strand task-attr)))
+      (throw (ex-info "kanban note target must be a kanban card or task"
+                      {:id id :attributes (:attributes strand)})))
+    strand))
+
+(defn- owning-card
+  "Return the kanban card that parents task-strand, or nil when unparented."
+  [rt task-strand]
+  (let [parent-ids (mapv :from_strand_id
+                         (graph/incoming-edges rt [(:id task-strand)] "parent-of"))]
+    (->> (graph/strands-by-ids rt parent-ids)
+         (filter #(= "true" (attr-value % card-attr)))
+         first)))
+
 (defn note!
-  "Append a note to a card via the blessed notes relation.
+  "Append a note to a card or task via the blessed notes relation.
 
   The note rides the shared `notes` edge (`skein.api.notes.alpha/note!`) with
-  `kanban/note`, `kind`, and optional `author` as decorating attrs, so
-  concurrent agents never race a read-merge-write cycle and every note keeps
-  its own timestamp and author. Note as you go — a resuming agent reads the
-  doing-task and its latest note from `kanban card <id>` alone."
+  `kanban/note`, `kind`, and optional `author`/`note/kind` decorating attrs,
+  so concurrent agents never race a read-merge-write cycle and every note
+  keeps its own timestamp and author. Note the doing-task as you go — that is
+  what `kanban card <id>` surfaces as each task's `:latest-note` — and keep
+  card notes to lean handover summaries. `--kind` stamps the open `note/kind`
+  view hint (blessed values: activity, decision, review-dump, summary). A
+  task note reports its owning card alongside the task when one parents it."
   [id text flags]
-  (let [card (card-strand (require-non-blank! :id id))
+  (let [target (note-target (require-non-blank! :id id))
         text (require-non-blank! :text text)
         rt (current/runtime)
         decorating (cond-> {note-attr "true"
                             :kind "note"}
-                     (get flags "--author") (assoc :author (get flags "--author")))
-        {note-id :id} (notes/note! rt (:id card) text decorating)
-        note (weaver/show rt note-id)]
-    {:operation "kanban note"
-     :card (:id card)
-     :note (select-keys note [:id :title :state :attributes])}))
-
-(defn- compact-note
-  "Return the compact note shape used in card output."
-  [strand]
-  (cond-> {:id (:id strand)
-           :title (:title strand)
-           :body (attr-value strand :note/text)
-           :created_at (:created_at strand)}
-    (attr-value strand :author) (assoc :author (attr-value strand :author))))
+                     (get flags "--author") (assoc :author (get flags "--author"))
+                     (get flags "--kind") (assoc :note/kind
+                                                 (require-non-blank! :kind (get flags "--kind"))))
+        {note-id :id} (notes/note! rt (:id target) text decorating)
+        note (weaver/show rt note-id)
+        result {:operation "kanban note"
+                :note (select-keys note [:id :title :state :attributes])}]
+    (if (= "true" (attr-value target card-attr))
+      (assoc result :card (:id target))
+      (let [card (owning-card rt target)]
+        (cond-> (assoc result :task (:id target))
+          card (assoc :card (:id card)))))))
 
 (defn- summarize-strand
   "Return the compact strand shape used in card subtree output."
@@ -806,7 +881,7 @@
                 type-attr "feature (default) | epic (grouping; parent-of its features)"
                 status-attr "refinement|pending|claimed|in_review|<outcome>"
                 priority-attr "p1|p2|p3|p4 (default p3); orders lanes and `kanban next`"
-                note-attr "true on note strands (closed notes-relation children of a card)"
+                note-attr "true on note strands (closed notes-relation children of a card or task)"
                 task-attr "true on task strands (parent-of children of a feature card; status derived)"
                 devflow-attr "optional devflow run-id; `kanban card` joins the run's stage and ready steps"
                 :kanban/source "optional path or URL for design context"
@@ -818,11 +893,13 @@
                  |under it with parent-of. Kanban complements the engines that produce them; it never
                  |tracks their runs directly.")
    :note-discipline (fmt/reflow "
-                      |Note as you go: `kanban note <id> \"...\" --author <name>` records each
-                      |significant decision, step, and gotcha while the work is fresh. Tasks are the
-                      |resume point — a cold agent resumes from the doing-task and its latest note
-                      |via `kanban board` -> `kanban card <id>`. Even with no notes yet, the
-                      |doing-task's body, deps, and lane name the next move.")
+                      |Note as you go, on the doing-TASK: `kanban note <task-id> \"...\" --author
+                      |<name> [--kind activity|decision|review-dump|summary]` records each
+                      |significant decision, step, and gotcha while the work is fresh, and
+                      |surfaces as that task's `latest-note`. Card notes stay lean handover
+                      |summaries; bulk content (review findings, pasted output) belongs on a task
+                      |note — views clip note bodies past a cap. A cold agent resumes from the
+                      |doing-task and its `latest-note` via `kanban board` -> `kanban card <id>`.")
    :discovery {:help "strand help kanban"
                :prime "strand kanban prime"
                :batch-pattern "strand pattern explain kanban-batch"}
@@ -835,7 +912,7 @@
               {:verb "priority" :purpose "Change a card's p1..p4 ordering priority."}
               {:verb "promote" :purpose "Move a refinement card into the pending lane."}
               {:verb "claim" :purpose "Move a card into claimed and stamp owner/branch/worktree."}
-              {:verb "note" :purpose "Append an immutable card note."}
+              {:verb "note" :purpose "Append an immutable note to a card or task (the doing-task is the resume read)."}
               {:verb "task" :purpose "Add or list a feature card's tasks with their derived statuses."}
               {:verb "review" :purpose "Move a claimed card into in_review."}
               {:verb "rework" :purpose "Move an in_review card back to claimed."}
@@ -883,22 +960,32 @@
                |<path>]` — owner and branch are mandatory; the claim is what makes branch work
                |discoverable.
                |
-               |Create the feature's execution strands under the card via `parent-of`.
-               |The card is the parent/audit root; child strands are the executable work.
+               |Decompose the feature into tasks before working: `kanban task add <feature>
+               |\"<title>\" [--depends-on <id>]` slices the work into the derived-status DAG,
+               |and the task you are driving is the board's doing-task signal. Other
+               |execution strands still hang under the card via `parent-of` — the card is the
+               |parent/audit root, the tasks are the driveable slices.
                |
-               |`kanban review <id>` when work enters review, `kanban rework <id>` when it needs changes, and `kanban finish <id> [--outcome done|abandoned]` after merge, archive, or
-               |explicit abandonment.")
+               |`kanban review <id>` when work enters review, `kanban rework <id>` when it
+               |needs changes, and `kanban finish <id> [--outcome done|abandoned]` after
+               |merge, archive, or explicit abandonment.")
          :note-discipline
          (fmt/fill "
-               |Note as you go: `kanban note <id> \"...\" --author <name>` records each
-               |significant decision, step, and gotcha while the work is fresh — do not save it
-               |for a stopping point.
+               |Note as you go, on the doing-TASK: `kanban note <task-id> \"...\" --author
+               |<name>` records each significant decision, step, and gotcha while the work is
+               |fresh — do not save it for a stopping point. Task notes surface as that task's
+               |`latest-note`; the card's own note trail stays a lean handover summary.
+               |
+               |Bulk content never goes on the card: review findings, pasted command output,
+               |and long dumps belong on a task note, stamped with their view hint (`--kind
+               |review-dump`, or activity|decision|summary). Views clip note bodies past a
+               |cap; `strand show <note-id>` returns the full text.
                |
                |Tasks are the resume point. A cold agent resumes from the doing-task and its
-               |latest note: `kanban board` shows claimed and in-review cards with their
-               |doing-task; `kanban card <id>` returns the card, its tasks, notes, active work,
-               |and ready frontier. Even with no notes yet, the doing-task's body, deps, and
-               |lane name the next move.")
+               |`latest-note`: `kanban board` shows claimed and in-review cards with their
+               |doing-task; `kanban card <id>` returns the card, its tasks (each carrying its
+               |`latest-note`), notes, active work, and ready frontier. Even with no notes
+               |yet, the doing-task's body, deps, and lane name the next move.")
          :staying-aware
          (fmt/fill "
                |`kanban board` returns `needs-review`: the human-review frontier aggregated
@@ -953,9 +1040,10 @@
                      :worktree {:doc "Optional worktree path."}
                      :devflow {:doc "Optional devflow run-id joined by `kanban card`."}}
              :positionals [{:name :id :required? true :doc "Kanban card id."}]}
-    "note" {:doc "Append a note as a closed child strand."
-            :flags {:author {:doc "Note author."}}
-            :positionals [{:name :id :required? true :doc "Kanban card id."}
+    "note" {:doc "Append a note to a card or task; note the doing-task as you go."
+            :flags {:author {:doc "Note author."}
+                    :kind {:doc "Open note/kind view hint: activity, decision, review-dump, summary."}}
+            :positionals [{:name :id :required? true :doc "Kanban card or task id."}
                           {:name :text
                            :required? true
                            :variadic? true

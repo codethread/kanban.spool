@@ -276,12 +276,76 @@
                      (set (map :id (:active-work view)))))
               ;; review depends on the task, so only the task is ready
               (is (= [(:id task)] (mapv :id (:ready view))))))
-          (testing "notes reject non-card targets and missing text"
-            (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not a kanban card"
+          (testing "notes reject targets outside the card/task tier and missing text"
+            ;; the child here carries kind=task but not the kanban/task marker,
+            ;; so it is generic work, not a note target
+            (is (thrown-with-msg? clojure.lang.ExceptionInfo #"must be a kanban card or task"
                                   (op! rt "note" (:id task) "text")))
             (let [missing-text (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Missing required argument text"
                                                      (op! rt "note" card-id)))]
               (is (= :missing-required (:reason (ex-data missing-text)))))))))))
+
+(deftest kanban-note-targets-tasks-and-stamps-kind
+  (with-kanban
+    (fn [rt]
+      (let [feature-id (get-in (op! rt "add" "Task-noted feature") [:card :id])
+            task-id (get-in (op! rt "task" "add" feature-id "Wire the thing") [:task :id])]
+        (testing "a task note reports the task and its owning card"
+          (let [noted (op! rt "note" task-id "Done: wiring. Next: tests."
+                           "--author" "agent-a" "--kind" "activity")]
+            (is (= task-id (:task noted)))
+            (is (= feature-id (:card noted)))
+            (is (= "activity" (get-in noted [:note :attributes :note/kind])))
+            (is (= "true" (get-in noted [:note :attributes :kanban/note])))))
+        (testing "the newest task note surfaces as :latest-note in every task projection"
+          (op! rt "note" task-id "Chose sqlite over flat files" "--kind" "decision")
+          (let [listed (first (:tasks (op! rt "task" "list" feature-id)))
+                viewed (first (:tasks (op! rt "card" feature-id)))]
+            (is (= "Chose sqlite over flat files" (get-in listed [:latest-note :body])))
+            (is (= "decision" (get-in listed [:latest-note :kind])))
+            (is (= (dissoc (:latest-note listed) :created_at)
+                   (dissoc (:latest-note viewed) :created_at)))))
+        (testing "task notes stay out of the card's own note trail"
+          (op! rt "note" feature-id "Handover: task tier carries the detail")
+          (let [bodies (mapv :body (:notes (op! rt "card" feature-id)))]
+            (is (= ["Handover: task tier carries the detail"] bodies))))
+        (testing "a card note keeps the card-only response shape"
+          (let [noted (op! rt "note" feature-id "Lean card note")]
+            (is (= feature-id (:card noted)))
+            (is (not (contains? noted :task)))))
+        (testing "a blank --kind fails loudly"
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"kind must be a non-blank string"
+                                (op! rt "note" task-id "text" "--kind" ""))))
+        (testing "a task with no notes omits :latest-note"
+          (let [bare-id (get-in (op! rt "task" "add" feature-id "Untouched task") [:task :id])
+                bare (some #(when (= bare-id (:id %)) %)
+                           (:tasks (op! rt "task" "list" feature-id)))]
+            (is (not (contains? bare :latest-note)))))))))
+
+(deftest kanban-views-clip-long-note-bodies
+  (with-kanban
+    (fn [rt]
+      (let [feature-id (get-in (op! rt "add" "Dump-resistant feature") [:card :id])
+            task-id (get-in (op! rt "task" "add" feature-id "Reviewed task") [:task :id])
+            dump (apply str (repeat 700 "x"))]
+        (op! rt "note" feature-id "Short and intact")
+        (op! rt "note" feature-id dump "--kind" "review-dump")
+        (op! rt "note" task-id dump)
+        (testing "card notes past the cap are clipped and marked truncated"
+          (let [[long-note short-note] (:notes (op! rt "card" feature-id))]
+            (is (true? (:truncated long-note)))
+            (is (< (count (:body long-note)) (count dump)))
+            (is (str/ends-with? (:body long-note) "…"))
+            (is (= "review-dump" (:kind long-note)))
+            (is (= "Short and intact" (:body short-note)))
+            (is (not (contains? short-note :truncated)))))
+        (testing "the full text stays on the note strand"
+          (let [note-id (:id (first (:notes (op! rt "card" feature-id))))]
+            (is (= dump (get-in (weaver/show rt note-id) [:attributes :note/text])))))
+        (testing "task latest-note bodies clip the same way"
+          (let [latest (:latest-note (first (:tasks (op! rt "card" feature-id))))]
+            (is (true? (:truncated latest)))
+            (is (str/ends-with? (:body latest) "…"))))))))
 
 (deftest kanban-board-groups-lanes
   (with-kanban

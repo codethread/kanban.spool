@@ -36,7 +36,7 @@ Card state lives under the `kanban/*` attribute topic:
 | `kanban/status` | `refinement`, `pending`, `claimed`, `in_review`, or an explicit closed outcome. |
 | `kanban/priority` | `p1`, `p2`, `p3` (default), or `p4`; cards without the attribute read as `p3`. |
 | `kanban/source` | Optional path or URL for design context (RFC, feature folder). |
-| `kanban/note` | `"true"` decoration on strands linked to a card by the blessed `notes` relation. |
+| `kanban/note` | `"true"` decoration on strands linked to a card or task by the blessed `notes` relation. |
 | `kanban/task` | `"true"` on task strands: `parent-of` children of a feature card whose status is derived, never stored. |
 | `kanban/devflow` | Optional devflow run-id (the devflow feature name); `kanban card` joins the run's stage and ready steps. |
 | `owner` | Who is driving the work; required at claim. |
@@ -51,7 +51,7 @@ The card is the **work root**: execution strands hang under it with `parent-of` 
 
 ## Task tier
 
-A feature card decomposes into **tasks**, the `epic > feature > task` tier. A task is an ordinary strand hung under the card by a `parent-of` edge and stamped `kanban/task=true`; other children (plans, reviews, notes) never read as tasks. `strand kanban task add <feature> "<title>"` stamps the marker and lays the edge, with `--body` for longer context and repeatable `--depends-on <id>` for the concurrency DAG; bare `strand add` under the card still works. `strand kanban task list <feature>` projects the card's tasks with their derived status.
+A feature card decomposes into **tasks**, the `epic > feature > task` tier. A task is an ordinary strand hung under the card by a `parent-of` edge and stamped `kanban/task=true`; other children (plans, reviews, notes) never read as tasks. `strand kanban task add <feature> "<title>"` stamps the marker and lays the edge, with `--body` for longer context and repeatable `--depends-on <id>` for the concurrency DAG; bare `strand add` under the card still works. `strand kanban task list <feature>` projects the card's tasks with their derived status and each task's newest note (`latest-note`).
 
 Task status is **derived, never stored**: a pure function of the core strand graph plus the core `owner` attr, reading no execution-engine vocabulary.
 
@@ -68,18 +68,23 @@ Because nothing writes the status it cannot drift the way a stored field would: 
 
 Notes are strands linked to their target by the blessed `notes` relation, not card attributes or `parent-of` children. Kanban marks its notes with
 `kanban/note`; that attribute is decoration for board views. Concurrent agents do not race a
-read-merge-write cycle, and every note keeps its own timestamp and author:
+read-merge-write cycle, and every note keeps its own timestamp and author.
+
+A note targets a **card or a task** — anything else fails loudly. Progress notes belong on the doing-task; the card's own trail stays a lean handover summary. Bulk content (review findings, pasted output) always goes on a task note:
 
 ```sh
-strand kanban note <id> "Decided X because Y" --author claude
+strand kanban note <task-id> "Decided X because Y" --author claude --kind decision
+strand kanban note <card-id> "Handover: impl landed, docs next" --author claude
 ```
 
-Note as you go, not at the end: record what is done, what is next, validation state, and gotchas on the doing-task as you reach them. The resume surface is the card's task tier plus those notes, so a cold agent resumes from the doing-task and its latest note with no prior context. Even with no notes the doing-task still carries its body, deps, and lane:
+Note as you go, not at the end: record what is done, what is next, validation state, and gotchas on the doing-task as you reach them. Each task projection (`card <id>`, `task list`, the board's doing-task) carries the task's newest note as `latest-note`, so a cold agent resumes from the doing-task and its `latest-note` with no prior context. Even with no notes the doing-task still carries its body, deps, and lane:
 
-1. `strand kanban board` — claimed cards show owner, branch, worktree, and their doing-task.
-2. `strand kanban card <id>` — the full card: tasks with their derived statuses, notes (newest first), active work subtree, and the ready frontier.
+1. `strand kanban board` — claimed cards show owner, branch, worktree, and their doing-task (with its `latest-note`).
+2. `strand kanban card <id>` — the full card: tasks with their derived statuses and `latest-note`, card notes (newest first), active work subtree, and the ready frontier.
 
-A note may carry a `note/kind` decorating attr (`--attr note/kind=<value>`) that views can fold or filter by; it is a core `note` attribute, not kanban-specific. The set is open and guidance-only, never an enforced enum, with four blessed values: `activity` (a progress log), `decision` (a durable choice and why), `review-dump` (bulk findings), and `summary` (a run or session wrap-up). An absent `note/kind` reads as `activity`; any other value stays a valid userland annotation.
+Views compact what they show: note bodies past a cap (600 characters) are clipped and marked `truncated: true`; the full text stays on the note strand (`strand show <note-id>`). This keeps one long note from drowning the resume read — the card view is a projection, never the storage.
+
+A note may carry a `note/kind` decorating attr (`--kind <value>`) that views can fold or filter by; it is a core `note` attribute, not kanban-specific. The set is open and guidance-only, never an enforced enum, with four blessed values: `activity` (a progress log), `decision` (a durable choice and why), `review-dump` (bulk findings), and `summary` (a run or session wrap-up). An absent `note/kind` reads as `activity`; any other value stays a valid userland annotation. Compact note projections surface it as `kind`.
 
 ## CLI op
 
@@ -95,7 +100,7 @@ strand kanban next
 strand kanban priority <id> <p1|p2|p3|p4>
 strand kanban promote <id>
 strand kanban claim <id> --owner <name> --branch <branch> [--worktree /path] [--devflow <run-id>]
-strand kanban note <id> <text> [--author <name>]
+strand kanban note <card-or-task-id> <text> [--author <name>] [--kind activity|decision|review-dump|summary]
 strand kanban task add <feature> <title> [--body "Longer context"] [--depends-on <id> ...]
 strand kanban task list <feature>
 strand kanban review <id>
@@ -107,7 +112,7 @@ strand kanban finish <id> [--outcome done|abandoned]
 
 `board` returns the grouped snapshot (epics, refinement/pending/claimed/in_review lanes sorted p1-first then oldest, closed count); active cards with a status outside the known lanes surface in `unknown-status` rather than being hidden. It also returns `needs-review`: a vector aggregated across claimed and in-review feature cards of `{:card :item}` entries (plus `:branch` from the claim stamp), one per card descendant that is active, in the engine ready frontier, and marks human review (`hitl`/`workflow/hitl` true, or `kind` `review`), sorted by card id then item id — the always-present cross-card review queue. `next` returns the highest-priority (p1 first) oldest active pending feature (epics are never served). `priority` restamps an active card's `kanban/priority` and fails loudly on unknown values or closed cards. `promote` is the explicit human command that moves a refinement card into the pending lane. `claim` fails loudly without `--owner` and `--branch` and refuses epics; `--worktree` is optional for direct work in the main checkout. `review` moves a claimed card to `in_review`; `rework` moves it back to `claimed`; `finish` closes a claimed or in-review card with the outcome status.
 
-`card` returns the resume view (card, tasks with derived statuses, notes, active work, ready frontier) plus `related`: a vector of `{:relation :strand}` entries for every `depends-on` edge touching the card — `depends-on` when the card is the dependent, `depended-on-by` when it is the dependency — sorted by other-endpoint id. Cards stamped with `kanban/devflow` (via `claim --devflow`) also carry `devflow`: the named run's current stage and its ready steps (see [Devflow dependency](#devflow-dependency)). `task add` hangs a task under a feature card (marker attr plus `parent-of`, optional `--depends-on` edges) and `task list` projects that card's tasks with their derived statuses (see the Task tier section); both fail loudly on a missing, non-card, or non-feature target — epics group features and never own tasks directly.
+`card` returns the resume view (card, tasks with derived statuses and `latest-note`, compact card notes, active work, ready frontier) plus `related`: a vector of `{:relation :strand}` entries for every `depends-on` edge touching the card — `depends-on` when the card is the dependent, `depended-on-by` when it is the dependency — sorted by other-endpoint id. Cards stamped with `kanban/devflow` (via `claim --devflow`) also carry `devflow`: the named run's current stage and its ready steps (see [Devflow dependency](#devflow-dependency)). `task add` hangs a task under a feature card (marker attr plus `parent-of`, optional `--depends-on` edges) and `task list` projects that card's tasks with their derived statuses (see the Task tier section); both fail loudly on a missing, non-card, or non-feature target — epics group features and never own tasks directly.
 
 For bulk authoring, the `kanban-batch` weave pattern creates pending feature cards with bodies and `depends-on` edges atomically:
 
