@@ -24,25 +24,30 @@ render a card's subtree to a standalone HTML file offline (see kanban.md's
 
 - A Skein checkout/runtime providing the blessed `skein.api.*.alpha` surface.
 - A live weaver configured from a workspace you control.
-- The devflow spool ([`codethread/devflow.spool`](https://github.com/codethread/devflow.spool)),
-  approved as its own coordinate: `kanban card` joins a card's named devflow
-  run (stage + ready steps), so `skein.spools.kanban` requires
-  `skein.spools.devflow` at load. The dependency is one-way — devflow never
-  depends on kanban.
 - A 40-hex git SHA pin for this repository, or a local checkout approved through
   `spools.local.edn` for development.
 
-This spool declares no Maven dependencies of its own.
+Kanban core has **no spool prerequisites**: it carries no compile- or load-time
+dependency on devflow or any other tracker. The `kanban card` run projection is
+a runtime binding supplied by trusted config, so a world can run kanban whether
+it binds devflow, binds another tracker, or binds nothing (see the
+[Tracker seam](./kanban.md#tracker-seam)). This spool declares no Maven
+dependencies of its own.
 
 ## Dependency information
 
 Approve every source spool explicitly; no prerequisite is fetched
-transitively. Kanban's one spool prerequisite is devflow, which in turn
-requires `skein.spools.workflow` — one of Skein's in-repo reference spools,
-living in a spool root (`<skein>/spools/workflow`) **off** the base classpath,
-so it needs its own approved coordinate too.
+transitively. Kanban itself needs only its own coordinate.
 
 Shared workspace example:
+
+```clojure
+{:spools {codethread/kanban {:git/url "git@github.com:codethread/kanban.spool.git"
+                             :git/sha "<40-hex-sha-for-the-approved-commit>"}}}
+```
+
+A repo that wants the devflow tracker binding also approves devflow (and the
+workflow spool root it requires), but kanban never loads them itself:
 
 ```clojure
 {:spools {skein.spools/workflow {:local/root "/path/to/your/skein/spools/workflow"}
@@ -64,10 +69,10 @@ encoded in a manifest.
 
 ## Activation
 
-Activate prerequisites before dependents — workflow, then devflow, then
-kanban — and always `sync!` before any `:spools`-guarded `use!`: synced
-approved roots are what activation loads from. The consumer owns the runtime
-and activates each module explicitly from trusted `init.clj` or REPL code.
+Always `sync!` before any `:spools`-guarded `use!`: synced approved roots are
+what activation loads from. The consumer owns the runtime and activates kanban
+explicitly from trusted `init.clj` or REPL code. Kanban has no prerequisite to
+activate first:
 
 ```clojure
 (require '[skein.api.current.alpha :as current]
@@ -77,6 +82,26 @@ and activates each module explicitly from trusted `init.clj` or REPL code.
 
 (runtime/sync! runtime)
 
+(runtime/use! runtime
+  :kanban
+  {:spools ['codethread/kanban]
+   :ns 'skein.spools.kanban
+   :call 'skein.spools.kanban/install!
+   :required? true})
+```
+
+`install!` registers the `kanban` and `kanban-export` ops, the `kanban-batch` weave pattern, the
+`kanban-cards`/`kanban-unstarted` queries, and declares the `kanban/*`
+attribute namespace. It never binds a tracker.
+
+### Binding a tracker (optional)
+
+To have `kanban card` project a run's status and ready steps, bind a tracker
+strategy after kanban activates (see the [Tracker seam](./kanban.md#tracker-seam)
+for the contract). A repo that stages work through devflow activates devflow and
+its workflow prerequisite, then binds a small trusted-config adapter:
+
+```clojure
 ;; workflow is an approved spool root, not base-classpath code: guard the
 ;; activation on its coordinate so a missing/unsynced approval fails loudly.
 (runtime/use! runtime
@@ -93,27 +118,24 @@ and activates each module explicitly from trusted `init.clj` or REPL code.
    :after [:workflow]
    :required? true})
 
+;; kanban_tracker.clj composes devflow's read fns into kanban's projection shape
+;; and calls kanban/set-tracker!; it is the one place that knows both vocabularies.
 (runtime/use! runtime
-  :kanban
-  {:spools ['codethread/kanban 'codethread/devflow]
-   :ns 'skein.spools.kanban
-   :call 'skein.spools.kanban/install!
-   :after [:devflow]
-   :required? true})
+  :kanban/tracker
+  {:file "kanban_tracker.clj"
+   :spools ['codethread/kanban 'codethread/devflow]
+   :after [:kanban :devflow]
+   :call 'kanban-tracker/install!})
 ```
 
-Keep kanban's `:after [:devflow]` and both coordinates in its `:spools` guard:
-the namespace requires `skein.spools.devflow`, so devflow's approved source
-must be synced before kanban loads.
-
-`install!` registers the `kanban` and `kanban-export` ops, the `kanban-batch` weave pattern, the
-`kanban-cards`/`kanban-unstarted` queries, and declares the `kanban/*`
-attribute namespace.
+A repo with a different tracker writes its own module against the same contract;
+a repo with no tracker skips the block entirely and stamped cards project as
+unbound.
 
 ## Development
 
 Tests run standalone against a sibling Skein checkout (see the `:test` alias
-in [deps.edn](./deps.edn) for the exact roots):
+in [deps.edn](./deps.edn) for the exact root):
 
 ```sh
 clojure -M:test

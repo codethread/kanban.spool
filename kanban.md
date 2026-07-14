@@ -38,7 +38,8 @@ Card state lives under the `kanban/*` attribute topic:
 | `kanban/source` | Optional path or URL for design context (RFC, feature folder). |
 | `kanban/note` | `"true"` decoration on strands linked to a card or task by the blessed `notes` relation. |
 | `kanban/task` | `"true"` on task strands: `parent-of` children of a feature card whose status is derived, never stored. |
-| `kanban/devflow` | Optional devflow run-id (the devflow feature name); `kanban card` joins the run's stage and ready steps. |
+| `kanban/run` | Optional tracker run-id; `kanban card` joins the bound tracker's status and ready steps (see [Tracker seam](#tracker-seam)). |
+| `kanban/devflow` | Deprecated pre-tracker run-id alias, read as a fallback for `kanban/run` (`kanban/run` wins when both are stamped). |
 | `owner` | Who is driving the work; required at claim. |
 | `branch` | The work branch; required at claim. |
 | `worktree` | Optional worktree path. |
@@ -99,7 +100,7 @@ strand kanban card <id>
 strand kanban next
 strand kanban priority <id> <p1|p2|p3|p4>
 strand kanban promote <id>
-strand kanban claim <id> --owner <name> --branch <branch> [--worktree /path] [--devflow <run-id>]
+strand kanban claim <id> --owner <name> --branch <branch> [--worktree /path] [--run <run-id>]
 strand kanban note <card-or-task-id> <text> [--author <name>] [--kind activity|decision|review-dump|summary]
 strand kanban task add <feature> <title> [--body "Longer context"] [--depends-on <id> ...]
 strand kanban task list <feature>
@@ -112,7 +113,15 @@ strand kanban finish <id> [--outcome done|abandoned]
 
 `board` returns the grouped snapshot (epics, refinement/pending/claimed/in_review lanes sorted p1-first then oldest, closed count); active cards with a status outside the known lanes surface in `unknown-status` rather than being hidden. It also returns `needs-review`: a vector aggregated across claimed and in-review feature cards of `{:card :item}` entries (plus `:branch` from the claim stamp), one per card descendant that is active, in the engine ready frontier, and marks human review (`hitl`/`workflow/hitl` true, or `kind` `review`), sorted by card id then item id — the always-present cross-card review queue. `next` returns the highest-priority (p1 first) oldest active pending feature (epics are never served). `priority` restamps an active card's `kanban/priority` and fails loudly on unknown values or closed cards. `promote` is the explicit human command that moves a refinement card into the pending lane. `claim` fails loudly without `--owner` and `--branch` and refuses epics; `--worktree` is optional for direct work in the main checkout. `review` moves a claimed card to `in_review`; `rework` moves it back to `claimed`; `finish` closes a claimed or in-review card with the outcome status.
 
-`card` returns the resume view (card, tasks with derived statuses and `latest-note`, compact card notes, active work, ready frontier) plus `related`: a vector of `{:relation :strand}` entries for every `depends-on` edge touching the card — `depends-on` when the card is the dependent, `depended-on-by` when it is the dependency — sorted by other-endpoint id. Cards stamped with `kanban/devflow` (via `claim --devflow`) also carry `devflow`: the named run's current stage and its ready steps (see [Devflow dependency](#devflow-dependency)). `task add` hangs a task under a feature card (marker attr plus `parent-of`, optional `--depends-on` edges) and `task list` projects that card's tasks with their derived statuses (see the Task tier section); both fail loudly on a missing, non-card, or non-feature target — epics group features and never own tasks directly.
+`card` returns the resume view (card, tasks with derived statuses and `latest-note`, compact card
+notes, active work, ready frontier) plus `related`: a vector of `{:relation :strand}` entries for
+every `depends-on` edge touching the card. The relation is `depends-on` when the card is the
+dependent and `depended-on-by` when it is the dependency; entries sort by the other endpoint's id.
+Cards stamped with `kanban/run` (via `claim --run`) also carry `tracker`: the bound tracker's status
+for that run and its ready steps (see [Tracker seam](#tracker-seam)). `task add` hangs a task under a
+feature card (marker attr plus `parent-of`, optional `--depends-on` edges), and `task list` projects
+that card's tasks with their derived statuses (see the Task tier section). Both fail loudly on a
+missing, non-card, or non-feature target. Epics group features and never own tasks directly.
 
 For bulk authoring, the `kanban-batch` weave pattern creates pending feature cards with bodies and `depends-on` edges atomically:
 
@@ -142,26 +151,82 @@ It returns the root, every strand beneath it via `parent-of` (all lifecycle stat
 
 [`scripts/kanban-export/kanban-export.ts`](./scripts/kanban-export/kanban-export.ts) is that consumer: a dependency-free Bun renderer that turns the export payload into a single self-contained HTML file with an overall progress rollup and a per-child breakdown. `make kanban-export ID=<card-id> [ARGS='--open']` runs it directly; `make kanban-serve ID=<card-id> [PORT=8000]` exports to `/tmp/kanban-export` and serves it over the LAN.
 
-## Devflow dependency
+## Tracker seam
 
-Kanban requires [`skein.spools.devflow`](https://github.com/codethread/devflow.spool) in exactly
-one seam: the `kanban card` view. A card optionally names its devflow run through the
-`kanban/devflow` attribute (`claim --devflow <run-id>` stamps it; the devflow feature name is the
-workflow run-id), and `card` then joins:
+Kanban core has no compile- or load-time dependency on any tracker. Instead, trusted config
+binds a **run-tracker strategy** for the weaver lifetime, and the `kanban card` view joins it in
+exactly one seam. This mirrors chime's notifier binding: a vocabulary-agnostic engine ships
+unbound, config supplies the implementation, and unbound use degrades honestly.
 
-```json
-"devflow": {"feature": "widgets-run",
-            "stage": "intake",
-            "next-steps": [{"id": "...", "title": "...", "kind": "step", "stage": "intake"}]}
+**Binding.** Bind the strategy once per weaver lifetime (and again after every startup or config
+reload — `install!` never binds a default):
+
+```clojure
+(kanban/set-tracker!
+  {:name "devflow"
+   :project 'kanban-tracker/devflow-projection})
 ```
 
-A stamped card whose run has no active devflow root — not started, finished, or archived —
-projects a `null` stage with no steps rather than hiding the key. Kanban only reads devflow
-state; it never writes it, and devflow never depends on kanban.
+- `:name` — a non-blank string naming the convention; it surfaces in `kanban about` and in the
+  card view's `tracker` so a cold agent knows which tracker the steps come from.
+- `:project` — a fully-qualified symbol (resolved with `requiring-resolve` at call time, so a
+  reload rebinds cleanly) or a function. Contract: `(project run-id)` returns
+  `{:status <string|nil> :next-steps [step ...]}`. Kanban selects each step down to the closed key
+  set `#{:id :title :kind :stage :checkpoint}`, so the card-view shape stays kanban-owned whatever
+  the tracker returns.
 
-The dependency is deliberately one-way and one-seam. Consumers approve the devflow spool as its
-own `spools.edn` coordinate and activate it before kanban; the [README](./README.md) carries the
-full recipe.
+A malformed binding is rejected loudly (unknown keys, a blank name, or a `:project` that is
+neither a fully-qualified symbol nor a function). The owning Clojure specs are
+`:skein.spools.kanban/tracker-binding` for the binding,
+`:skein.spools.kanban/tracker-projection` for the strategy result, and
+`:skein.spools.kanban/tracker-view` for the public card-view shape. A projection must contain
+exactly `:status` and `:next-steps`; every step must be a map with non-blank `:id`, `:title`, and
+`:kind`. Malformed status values, missing keys, non-vector steps, and invalid step entries fail with
+the tracker name and run id in the error data. Kanban also validates the constructed public view,
+so malformed legacy run attributes fail instead of leaking through as an ambiguous projection.
+
+**The join.** A card names its run through the `kanban/run` attribute (`claim --run <run-id>`
+stamps it; `--devflow` remains a deprecated alias that also stamps `kanban/run`, and the legacy
+`kanban/devflow` attr is still read as a fallback). For a stamped card, `card` carries a
+`tracker` key:
+
+```json
+"tracker": {"name": "devflow",
+            "run": "widgets-run",
+            "status": "spec",
+            "next-steps": [{"id": "...", "title": "...", "kind": "step", "stage": "spec"}]}
+```
+
+- **binding present** — the bound strategy's status and ready steps; a tracker that reports no
+  active run projects a `null` status with no steps rather than hiding the key.
+- **binding absent** — `{"name": null, "run": "widgets-run", "status": null, "next-steps": []}`:
+  the stamp is visible and the missing strategy is visible.
+- **binding throws** — the card view fails with the strategy's error. The binding is repo-owner
+  config; masking its failures would violate fail-loud (TEN-003).
+
+An unstamped card carries no `tracker` key at all. Kanban only reads tracker state; it never
+writes it.
+
+**Worked example: the devflow adapter.** A repo that stages work through
+[`skein.spools.devflow`](https://github.com/codethread/devflow.spool) binds a small trusted-config
+module (roughly fifteen lines) that composes devflow's read fns into the projection shape:
+
+```clojure
+(defn devflow-projection [run-id]
+  (let [stage (some-> (devflow/feature-roots run-id) first
+                      (attr-value :devflow/stage))]
+    {:status stage
+     :next-steps (if stage (devflow/next-steps run-id) [])}))
+
+(defn install! []
+  (kanban/set-tracker! {:name "devflow"
+                        :project 'kanban-tracker/devflow-projection}))
+```
+
+The devflow spool stays kanban-ignorant, and the adapter lives in the one place that knows both
+vocabularies — consumer config, not either spool. A repo with a different tracker writes its own
+module against the same two-key contract; a repo with no tracker skips the block entirely and
+stamped cards project as unbound. The consuming [README](./README.md) carries the full recipe.
 
 ## Queries
 

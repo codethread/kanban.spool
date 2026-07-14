@@ -25,8 +25,8 @@
             [skein.api.vocab.alpha :as vocab]
             [skein.api.weaver.alpha :as weaver]
             [skein.api.format.alpha :as fmt]
-            [skein.api.spool.alpha :refer [attr-get]]
-            [skein.spools.devflow :as devflow]))
+            [skein.api.runtime.alpha :as runtime]
+            [skein.api.spool.alpha :refer [attr-get fail! reject-unknown-keys!]]))
 
 (def ^:private card-attr :kanban/card)
 (def ^:private status-attr :kanban/status)
@@ -34,7 +34,12 @@
 (def ^:private priority-attr :kanban/priority)
 (def ^:private note-attr :kanban/note)
 (def ^:private task-attr :kanban/task)
-(def ^:private devflow-attr :kanban/devflow)
+(def ^:private run-attr :kanban/run)
+(def ^:private devflow-attr
+  "Deprecated pre-tracker run-id attr. Read as a fallback when kanban/run is
+  unstamped so cards claimed before the tracker seam still project their run;
+  RFC-022.D6 step 4 drops this fallback once no live cards carry it."
+  :kanban/devflow)
 
 (def ^:private addable-statuses #{"pending" "refinement"})
 (def ^:private active-lanes #{"refinement" "pending" "claimed" "in_review"})
@@ -281,15 +286,31 @@
       {:operation "kanban priority"
        :card (select-keys updated [:id :title :state :attributes])})))
 
+(defn- claim-run-id
+  "Return the run id to stamp at claim, or nil when neither flag is given.
+
+  `--run` is the canonical flag; `--devflow` stays a deprecated alias that stamps
+  the same `kanban/run` attr. Both are blank-guarded, and passing both at once
+  fails loudly rather than silently preferring one."
+  [flags]
+  (let [run (get flags "--run")
+        devflow (get flags "--devflow")]
+    (when (and run devflow)
+      (throw (ex-info "kanban claim accepts --run or --devflow, not both"
+                      {:run run :devflow devflow})))
+    (cond
+      run (require-non-blank! :run run)
+      devflow (require-non-blank! :devflow devflow))))
+
 (defn claim!
   "Claim a pending feature card, stamping the work-root attributes.
 
   `--owner` and `--branch` are mandatory so every claimed card answers who is
   driving it and on which branch; `--worktree` is optional (direct work in the
-  main checkout has no separate worktree). `--devflow` optionally names the
-  card's devflow run (the devflow feature name is the workflow run-id) so
-  `kanban card` can join the run's stage and ready steps. Epics group work and
-  are never claimed themselves."
+  main checkout has no separate worktree). `--run` optionally names the card's
+  tracker run so `kanban card` can join the bound tracker's status and ready
+  steps; `--devflow` is a deprecated alias that stamps the same `kanban/run`
+  attr. Epics group work and are never claimed themselves."
   [id flags]
   (let [strand (require-status! "claim" (card-strand (require-non-blank! :id id)) "pending")]
     (when (= "epic" (card-type strand))
@@ -297,12 +318,12 @@
                       {:id (:id strand)})))
     (let [owner (require-flag! "kanban claim" flags "--owner")
           branch (require-flag! "kanban claim" flags "--branch")
+          run (claim-run-id flags)
           attrs (cond-> {status-attr "claimed"
                          :owner owner
                          :branch branch}
                   (get flags "--worktree") (assoc :worktree (get flags "--worktree"))
-                  (get flags "--devflow") (assoc devflow-attr
-                                                 (require-non-blank! :devflow (get flags "--devflow"))))
+                  run (assoc run-attr run))
           updated (update-card! strand attrs nil)]
       {:operation "kanban claim"
        :card (select-keys updated [:id :title :state :attributes])})))
@@ -619,25 +640,184 @@
                   vec)]
     {:notes notes :work work}))
 
-(defn- devflow-join
-  "Return the card's devflow run projection, or nil for unstamped cards.
+;; ---------------------------------------------------------------------------
+;; tracker seam: the run projection joined into card view
+;;
+;; Kanban core carries no tracker dependency. Trusted config binds a run-tracker
+;; strategy for the weaver lifetime with `set-tracker!` (mirroring chime's
+;; `set-notifier!`), and `card-view` joins the bound strategy's projection for
+;; cards stamped with a run id. See RFC-022.D1.
+;; ---------------------------------------------------------------------------
 
-  The card names its run through the optional `kanban/devflow` attribute (the
-  devflow feature name is the workflow run-id). A stamped feature whose run has
-  no active devflow root — not started, finished, or archived — projects
-  honestly as a nil `:stage` with no steps rather than being hidden. This is
-  the spool's one devflow seam; kanban never writes devflow state."
+(s/def ::tracker-name non-blank-string?)
+(s/def ::tracker-project
+  #(or (fn? %) (and (symbol? %) (namespace %))))
+(s/def ::tracker-binding
+  (s/and map?
+         #(known-keys? #{:name :project} %)
+         #(s/valid? ::tracker-name (:name %))
+         #(s/valid? ::tracker-project (:project %))))
+(s/def ::tracker-status (s/nilable string?))
+(s/def ::tracker-step
+  (s/and map?
+         #(s/valid? ::non-blank-string (:id %))
+         #(s/valid? ::non-blank-string (:title %))
+         #(s/valid? ::non-blank-string (:kind %))))
+(s/def ::tracker-steps (s/coll-of ::tracker-step :kind vector?))
+(s/def ::tracker-projection
+  (s/and map?
+         #(known-keys? #{:status :next-steps} %)
+         #(contains? % :status)
+         #(contains? % :next-steps)
+         #(s/valid? ::tracker-status (:status %))
+         #(s/valid? ::tracker-steps (:next-steps %))))
+(s/def ::tracker-view
+  (s/and map?
+         #(known-keys? #{:name :run :status :next-steps} %)
+         #(contains? % :name)
+         #(contains? % :run)
+         #(contains? % :status)
+         #(contains? % :next-steps)
+         #(or (nil? (:name %)) (s/valid? ::tracker-name (:name %)))
+         #(s/valid? ::non-blank-string (:run %))
+         #(s/valid? ::tracker-status (:status %))
+         #(s/valid? ::tracker-steps (:next-steps %))))
+
+(def ^:private state-version
+  "Shape version for kanban's runtime spool-state map. Bump whenever `new-state`'s
+  key set changes: spool-state survives `reload!`, so a post-upgrade reload would
+  otherwise reuse a preserved map missing the new key (docs/spools/writing-shared-spools.md
+  'Versioned spool state', SPEC-004.C95)."
+  1)
+
+(defn- new-state []
+  {:tracker-binding (atom nil)})
+
+(defn- state []
+  (runtime/spool-state (current/runtime) ::state {:version state-version} new-state))
+
+(defn- tracker-binding [] (:tracker-binding (state)))
+
+(defn- validate-tracker!
+  "Return tracker when it satisfies `::tracker-binding`, failing loudly otherwise.
+
+  Mirrors chime's `validate-notifier!`; the manual checks retain concise
+  boundary errors while the owning spec remains the complete shape contract."
+  [tracker]
+  (when-not (map? tracker)
+    (fail! "Tracker binding must be a map" {:binding tracker}))
+  (reject-unknown-keys! "kanban set-tracker!" #{:name :project} tracker)
+  (when-not (non-blank-string? (:name tracker))
+    (fail! "Tracker :name must be a non-blank string" {:name (:name tracker)}))
+  (let [project (:project tracker)]
+    (when-not (or (fn? project) (and (symbol? project) (namespace project)))
+      (fail! "Tracker :project must be a fully-qualified symbol or a function"
+             {:project project})))
+  (when-not (s/valid? ::tracker-binding tracker)
+    (fail! "Tracker binding does not match its owning spec"
+           {:binding tracker
+            :spec ::tracker-binding
+            :explain (s/explain-data ::tracker-binding tracker)}))
+  tracker)
+
+(defn set-tracker!
+  "Bind the run-tracker strategy for this weaver lifetime.
+
+  The binding is `{:name <non-blank-string> :project <fq-symbol-or-fn>}`. `:name`
+  surfaces in `about` and the card view so a cold agent knows which convention
+  the projected steps follow; `:project` is `(fn [run-id] -> {:status <string|nil>
+  :next-steps [step ...]})`, resolved with `requiring-resolve` at call time when a
+  symbol so a config reload rebinds cleanly. Rebinding replaces the prior value;
+  pass a valid binding after every weaver startup or config reload. `install!`
+  never binds a default. The binding is validated against `::tracker-binding`."
+  [tracker]
+  (reset! (tracker-binding) (validate-tracker! tracker))
+  {:tracker @(tracker-binding)})
+
+(def ^:private tracker-step-keys
+  "Closed key set kanban projects from each tracker step, keeping the card-view
+  shape kanban-owned regardless of the bound strategy's richer step maps."
+  [:id :title :kind :stage :checkpoint])
+
+(defn- resolve-project
+  "Resolve a tracker binding's :project to a callable fn at call time.
+
+  A fn is used as-is; a fully-qualified symbol is resolved with
+  `requiring-resolve` so a config reload rebinds cleanly."
+  [project]
+  (if (fn? project)
+    project
+    (or (requiring-resolve project)
+        (fail! "Tracker :project symbol cannot be resolved" {:project project}))))
+
+(defn- card-run
+  "Return the run id stamped on a card, or nil for unstamped cards.
+
+  Reads the canonical `kanban/run` attr, falling back to the deprecated
+  `kanban/devflow` attr; `kanban/run` wins when both are stamped."
   [card]
-  (when-let [feature (attr-value card devflow-attr)]
-    (let [stage (some-> (devflow/feature-roots feature)
-                        first
-                        (attr-value :devflow/stage))]
-      {:feature feature
-       :stage stage
-       :next-steps (if stage
-                     (mapv #(select-keys % [:id :title :kind :stage :checkpoint])
-                           (devflow/next-steps feature))
-                     [])})))
+  (or (attr-value card run-attr)
+      (attr-value card devflow-attr)))
+
+(defn- validate-projection!
+  "Return projection when it satisfies `::tracker-projection`.
+
+  The tracker name and run id travel with failures so a repo owner can identify
+  the bad trusted-config strategy without reconstructing the card view call."
+  [binding run projection]
+  (when-not (s/valid? ::tracker-projection projection)
+    (fail! "Tracker projection does not match its owning spec"
+           {:tracker (:name binding)
+            :run run
+            :projection projection
+            :spec ::tracker-projection
+            :allowed {:keys [:status :next-steps]
+                      :status "string or nil"
+                      :next-steps "vector of maps"}
+            :explain (s/explain-data ::tracker-projection projection)}))
+  projection)
+
+(defn- validate-tracker-view!
+  "Return view when it satisfies the public `::tracker-view` contract."
+  [card view]
+  (when-not (s/valid? ::tracker-view view)
+    (fail! "Tracker view does not match its owning spec"
+           {:card (:id card)
+            :view view
+            :spec ::tracker-view
+            :allowed {:keys [:name :run :status :next-steps]
+                      :name "non-blank string or nil"
+                      :run "non-blank string"
+                      :status "string or nil"
+                      :next-steps "vector of maps with non-blank :id, :title, and :kind"}
+            :explain (s/explain-data ::tracker-view view)}))
+  view)
+
+(defn- tracker-join
+  "Return the card's tracker run projection, or nil for unstamped cards.
+
+  The card names its run through `kanban/run` (`kanban/devflow` read as a
+  fallback). With a tracker bound (`set-tracker!`), the bound strategy projects
+  the run's status and ready steps, and kanban trims each step to its own closed
+  key set so the card-view shape stays kanban-owned (RFC-022.G3); a tracker that
+  reports no active run projects an honest nil status with no steps. A stamped
+  card in a world with no binding projects as `{:name nil ...}` — the stamp
+  visible, the missing strategy visible — rather than hiding the key. A throwing
+  strategy propagates: the binding is repo-owner config, and masking its failure
+  would violate TEN-003. The strategy result is validated against
+  `::tracker-projection`; the returned public shape is `::tracker-view`."
+  [card]
+  (when-let [run (card-run card)]
+    (validate-tracker-view!
+     card
+     (if-let [binding @(tracker-binding)]
+       (let [projection (validate-projection!
+                         binding run ((resolve-project (:project binding)) run))]
+         {:name (:name binding)
+          :run run
+          :status (:status projection)
+          :next-steps (mapv #(select-keys % tracker-step-keys) (:next-steps projection))})
+       {:name nil :run run :status nil :next-steps []}))))
 
 (defn card-view
   "Return one card joined to its notes, tasks, work, and frontier.
@@ -645,8 +825,8 @@
   This is the resume entry point: everything an agent needs to continue a
   card lives here. `:tasks` projects the feature card's child tasks with the
   four derived statuses (empty for cards that carry no task tier), and
-  `:devflow` joins the named devflow run's stage and ready steps for cards
-  stamped with `kanban/devflow`."
+  `:tracker` joins the bound tracker's run status and ready steps for cards
+  stamped with `kanban/run` (see `tracker-join`)."
   [id]
   (let [rt (current/runtime)
         card (card-strand (require-non-blank! :id id))
@@ -654,7 +834,7 @@
         active-work (filterv #(= "active" (:state %)) work)
         work-ids (set (map :id active-work))
         ready (filterv #(contains? work-ids (:id %)) (weaver/ready rt))
-        devflow (devflow-join card)]
+        tracker (tracker-join card)]
     (cond-> {:operation "kanban card"
              :card (select-keys card [:id :title :state :attributes :created_at :updated_at])
              :tasks (tasks-with-status rt (feature-tasks rt (:id card)))
@@ -662,7 +842,7 @@
              :active-work (mapv summarize-strand active-work)
              :ready (mapv summarize-strand ready)
              :related (card-relations rt (:id card))}
-      devflow (assoc :devflow devflow))))
+      tracker (assoc :tracker tracker))))
 
 ;; ---------------------------------------------------------------------------
 ;; board
@@ -883,11 +1063,17 @@
                 priority-attr "p1|p2|p3|p4 (default p3); orders lanes and `kanban next`"
                 note-attr "true on note strands (closed notes-relation children of a card or task)"
                 task-attr "true on task strands (parent-of children of a feature card; status derived)"
-                devflow-attr "optional devflow run-id; `kanban card` joins the run's stage and ready steps"
+                run-attr "optional tracker run-id; `kanban card` joins the bound tracker's status and ready steps"
+                devflow-attr "deprecated pre-tracker run-id alias, read as a fallback for kanban/run"
                 :kanban/source "optional path or URL for design context"
                 :owner "claimant, required at claim"
                 :branch "work branch, required at claim"
                 :worktree "optional worktree path"}
+   :tracker (if-let [bound @(tracker-binding)]
+              (str "Bound tracker: " (:name bound)
+                   ". `kanban card` joins the run's status and ready steps for cards stamped kanban/run.")
+              (str "No tracker bound. Cards stamped kanban/run project honestly as unbound (name nil) "
+                   "until trusted config binds one with set-tracker!."))
    :convention (fmt/reflow "
                  |The card is the work root: claim stamps owner/branch, and execution strands hang
                  |under it with parent-of. Kanban complements the engines that produce them; it never
@@ -1038,7 +1224,8 @@
              :flags {:owner {:doc "Claimant name (required by handler)."}
                      :branch {:doc "Work branch (required by handler)."}
                      :worktree {:doc "Optional worktree path."}
-                     :devflow {:doc "Optional devflow run-id joined by `kanban card`."}}
+                     :run {:doc "Optional tracker run-id joined by `kanban card` (stamps kanban/run)."}
+                     :devflow {:doc "Deprecated alias for --run (stamps kanban/run)."}}
              :positionals [{:name :id :required? true :doc "Kanban card id."}]}
     "note" {:doc "Append a note to a card or task; note the doing-task as you go."
             :flags {:author {:doc "Note author."}
@@ -1166,7 +1353,7 @@
                                 :owner :skein/spools-kanban
                                 :keys ["kanban/card" "kanban/status" "kanban/type"
                                        "kanban/priority" "kanban/source" "kanban/task"
-                                       "kanban/devflow"]
+                                       "kanban/run" "kanban/devflow"]
                                 :doc "Kanban card state attributes written by skein.spools.kanban/add!."})
      :ops [(weaver/register-op! rt 'kanban
                                 {:doc "Manage the user-facing kanban work board. Run `strand kanban about` for the convention manual."

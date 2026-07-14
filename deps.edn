@@ -1,20 +1,15 @@
 {:paths ["src"]
  :aliases
  {:test {:extra-paths ["test"]
-         ;; Point these at the Skein checkout you want to test against.
-         ;; This repo is developed beside skein-src, so the defaults work for
-         ;; local owner checkouts and CI layouts that place the repos as siblings.
+         ;; Point this at the Skein checkout you want to test against. This repo
+         ;; is developed beside skein-src, so the default works for local owner
+         ;; checkouts and CI layouts that place the repos as siblings.
          ;;
-         ;; skein.spools.workflow lives in a spool root off Skein's main
-         ;; classpath, and skein.spools.devflow (kanban's one spool
-         ;; prerequisite) requires it, so both roots join the test JVM
-         ;; explicitly. Keep the devflow sha synchronized with the pin the
-         ;; consuming skein-src workspace approves in its .skein/spools.edn.
-         :extra-deps {io.skein/skein {:local/root "../skein-src"}
-                      io.skein/workflow-spool {:local/root "../skein-src/spools/workflow"}
-                      io.github.codethread/devflow.spool
-                      {:git/url "https://github.com/codethread/devflow.spool.git"
-                       :git/sha "e9b28f5db61820b28a1ac1b590cc87e70c835cac"}}
+         ;; Kanban core carries no tracker dependency (RFC-022): the run
+         ;; projection is a runtime binding supplied by trusted config, so the
+         ;; test JVM binds a stub tracker fn and needs neither devflow.spool nor
+         ;; the workflow spool root on its classpath.
+         :extra-deps {io.skein/skein {:local/root "../skein-src"}}
          :jvm-opts ["--enable-native-access=ALL-UNNAMED"]
          :main-opts ["-m" "skein.spools.kanban-test"]}
   :format {:extra-deps {dev.weavejester/cljfmt {:mvn/version "0.13.1"}}
