@@ -161,6 +161,105 @@ It returns the root, every strand beneath it via `parent-of` (all lifecycle stat
 
 [`scripts/kanban-export/kanban-export.ts`](./scripts/kanban-export/kanban-export.ts) is that consumer: a dependency-free Bun renderer that turns the export payload into a single self-contained HTML file with an overall progress rollup and a per-child breakdown. `make kanban-export ID=<card-id> [ARGS='--open']` runs it directly; `make kanban-serve ID=<card-id> [PORT=8000]` exports to `/tmp/kanban-export` and serves it over the LAN.
 
+## Peering
+
+Board peering lets sibling weavers on one machine hand cards to each other's boards. It is **opt-in and off by default**: `install!` never touches it. A repo turns it on by registering a second entry point, `install-peering!`, from trusted config, which registers three ops — the `kanban.send.v1` guild receive op, and the local `kanban-peers` and `kanban-send` ops.
+
+### What travels, and what never does
+
+Peering moves the **board tier only** — the shape of the work, not its execution or history.
+
+| Travels | Stays home |
+| --- | --- |
+| A feature card's title, body, priority, source, and lane (`pending`/`refinement`). | Tasks and any other `parent-of` execution strands. |
+| An epic card and its pending/refinement feature children as one bundle. | Notes, and everything under them. |
+| `:from` provenance: the sending board's name and the local card id. | Claims (`owner`/`branch`/`worktree`) and the local card id as an identity. |
+
+Only queued work travels. A `claimed`, `in_review`, or closed card is in-flight or finished work that is world-local; `kanban-send` refuses it loudly with the blocking lane. An epic refuses to send while any feature child is `claimed` or `in_review` (the blocking children are named); closed children are finished and simply stay home. Received cards are **new local cards** on the target board — they travel the same `add!` path as any local card, take the target's own ids and defaults, and carry no back-reference beyond the `kanban/from` stamp. Nothing on either board's lane changes as a side effect: closing the source card after a send stays the caller's choice.
+
+### Loading
+
+Peering depends on the `skein.spools.guild` spool for its receive op and on `skein.api.peers.alpha` for discovery. `skein.spools.guild` loads like any other spool — through the consuming workspace's `spools.edn` approval plus a runtime sync — so a peering repo approves **both** guild and kanban:
+
+```clojure
+;; spools.edn (or spools.local.edn overlay)
+{:spools {skein.spools/guild {:local/root "/path/to/your/skein/spools/guild"}
+          codethread/kanban {:git/url "git@github.com:codethread/kanban.spool.git"
+                             :git/sha "<40-hex-sha-for-the-approved-commit>"}}}
+```
+
+Peering stamps every card it sends with the local weaver's **published name**, so set one in `.skein/config.json` (a machine with two clones can override it per-checkout in the gitignored `.skein/config.local.json`):
+
+```json
+{"configFormat": "alpha", "name": "backend"}
+```
+
+Then activate, in order: guild first, kanban second, `install-peering!` last. `install-peering!` fails loudly if guild or the kanban board op is not already registered, so the `:after` ordering is a hard prerequisite, not a preference:
+
+```clojure
+(runtime/sync! runtime)
+
+(runtime/use! runtime
+  :guild
+  {:ns 'skein.spools.guild
+   :spools ['skein.spools/guild]
+   :call 'skein.spools.guild/install!
+   :required? true})
+
+(runtime/use! runtime
+  :kanban
+  {:ns 'ct.spools.kanban
+   :spools ['codethread/kanban]
+   :call 'ct.spools.kanban/install!
+   :required? true})
+
+(runtime/use! runtime
+  :kanban/peering
+  {:ns 'ct.spools.kanban
+   :spools ['codethread/kanban 'skein.spools/guild]
+   :after [:guild :kanban]
+   :call 'ct.spools.kanban/install-peering!
+   :required? true})
+```
+
+### Discovering and sending
+
+`kanban-peers` lists sibling weavers from mill metadata. Every peer is listed; each **running non-self** peer is probed via `guild.describe`, and `kanban-send?` is `true` when it advertises `kanban.send.v1`. A running peer that rejects `guild.describe` as an unknown op is an expected non-peering sibling (`kanban-send? false`); any other transport or protocol failure — including a malformed `guild.describe` envelope — propagates loudly. Stale peers (`running? false`) are listed but never probed. The local weaver — when it appears in the roster — is marked `self? true` and classified from the local op registry, not a socket call to itself.
+
+```sh
+strand kanban-peers
+# => {"operation": "kanban-peers",
+#     "peers": [{"name": "frontend", "workspace": "…", "weaver-id": "…",
+#                "running?": true, "kanban-send?": true},
+#               {"name": "backend", "weaver-id": "…", "running?": true,
+#                "self?": true, "kanban-send?": true}]}
+```
+
+`kanban-send <peer> <card-id>` resolves the local feature or epic card, preflights the target's `guild.describe` for `kanban.send.v1` (a clear error names the fix when the peer runs no peering or an older kanban), sends the payload, records a note on the local card with the created remote ids, and returns them:
+
+```sh
+strand kanban-send frontend abc12
+# => {"operation": "kanban-send", "peer": "frontend", "sent": {"card": {"id": "9xk2p"}}}
+```
+
+### The `kanban.send.v1` wire contract
+
+The receive op takes **one JSON object** as its single argument (guild parses it to keyword keys and validates it before the handler runs). It is exactly one of two shapes, plus optional provenance:
+
+```clojure
+;; a single feature
+{:card {:title "…"                      ; required
+        :body "…" :source "…"           ; optional
+        :priority "p1|p2|p3|p4"         ; optional; receiver defaults p3
+        :status "pending|refinement"}   ; optional; receiver defaults pending
+ :from {:board "backend" :card "abc12"}} ; optional provenance
+
+;; an epic bundle: an :epic card plus one or more :features (both card maps)
+{:epic {:title "…"} :features [{:title "…"} …] :from {…}}
+```
+
+Unknown keys, a missing title, a bad priority or status, a lone `:card`+`:epic`, an epic without features, and a malformed `:from` all fail spec validation loudly. The op returns JSON-safe ids only — `{:operation "kanban.send.v1" :card {:id …}}` for a single card, or `{:operation … :epic {:id …} :features [{:id …} …]}` for a bundle, features in input order. Every created card carries its provenance as one `kanban/from` attribute, `"<board>:<card>"` (e.g. `"backend:abc12"`), so the receiving board can trace a card to its origin without importing the source id as an identity.
+
 ## Tracker seam
 
 Kanban core has no compile- or load-time dependency on any tracker. Instead, trusted config

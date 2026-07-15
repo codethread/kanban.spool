@@ -11,6 +11,7 @@
             [skein.api.spool.alpha :as spool]
             [skein.core.weaver.runtime :as weaver-runtime]
             [ct.spools.kanban :as kanban]
+            [ct.spools.kanban-peering-test]
             [skein.test.alpha :as t]))
 
 (deftest exact-entity-projections-discard-extra-fields-and-fail-loudly
@@ -849,5 +850,6 @@
 (defn -main
   "Run the standalone kanban.spool test suite."
   [& _args]
-  (let [summary (clojure.test/run-tests 'ct.spools.kanban-test)]
+  (let [summary (clojure.test/run-tests 'ct.spools.kanban-test
+                                        'ct.spools.kanban-peering-test)]
     (System/exit (if (pos? (+ (:fail summary) (:error summary))) 1 0))))

@@ -1,6 +1,10 @@
 {:paths ["src"]
  :aliases
- {:test {:extra-paths ["test"]
+ {:test {;; The guild spool has no deps.edn manifest yet, so its source root is added
+         ;; directly to the test classpath (sibling-checkout convention, matching the
+         ;; io.skein/skein :local/root below). Once spools/guild ships a manifest this
+         ;; can become an :extra-deps {io.skein/guild {:local/root "../skein-src/spools/guild"}}.
+         :extra-paths ["test" "../skein-src/spools/guild/src"]
          ;; Point this at the Skein checkout you want to test against. This repo
          ;; is developed beside skein-src, so the default works for local owner
          ;; checkouts and CI layouts that place the repos as siblings.

@@ -1370,7 +1370,7 @@
                                 :owner :skein/spools-kanban
                                 :keys ["kanban/card" "kanban/status" "kanban/type"
                                        "kanban/priority" "kanban/source" "kanban/task"
-                                       "kanban/run" "kanban/devflow"]
+                                       "kanban/run" "kanban/devflow" "kanban/from"]
                                 :doc "Kanban card state attributes written by ct.spools.kanban/add!."})
      :ops [(weaver/register-op! rt 'kanban
                                 {:doc "Manage the user-facing kanban work board. Run `strand kanban about` for the convention manual."
@@ -1394,3 +1394,14 @@
                                        [:= :state "active"]
                                        [:= [:attr "kanban/card"] "true"]
                                        [:= [:attr "kanban/status"] "pending"]])]}))
+
+(defn install-peering!
+  "Register the opt-in `kanban.send.v1` board-peering receive op.
+
+  A separate opt-in entry point wired into trusted config after
+  `(skein.spools.guild/install!)` and `(install!)`. Delegates to
+  `ct.spools.kanban.peering/install-peering!` via `requiring-resolve` so the base
+  kanban spool never load-depends on the guild spool; peering (and its guild
+  dependency) load only when a repo opts in."
+  []
+  ((requiring-resolve 'ct.spools.kanban.peering/install-peering!)))
