@@ -56,6 +56,37 @@
 (defn- export! [rt & argv]
   (weaver/op! rt 'kanban-export argv))
 
+(defn- return-case-leaves [operation context return-case]
+  (if (and (map? return-case) (contains? return-case :stream))
+    (set (map (fn [channel] [operation (assoc context :channel channel)]) [:emits :result]))
+    #{[operation context]}))
+
+(defn- op-return-leaves [{:keys [name returns]}]
+  (if (and (map? returns) (contains? returns :subcommands))
+    (into #{} (mapcat (fn [[subcommand return-case]]
+                        (return-case-leaves name {:subcommand subcommand} return-case)))
+          (:subcommands returns))
+    (return-case-leaves name {} returns)))
+
+(deftest production-return-coverage-is-derived-from-kanban-provenance
+  (with-kanban
+    (fn [rt]
+      (let [entries (filterv #(= 'ct.spools.kanban (:provenance %)) (weaver/ops rt))
+            missing (filterv #(not (contains? % :returns)) entries)
+            required (into #{} (mapcat op-return-leaves) (remove #(not (contains? % :returns)) entries))
+            checked (atom #{})]
+        (is (seq entries))
+        (is (empty? missing) (str "production ops missing :returns: " (mapv :name missing)))
+        (doseq [[operation context :as leaf] required]
+          (t/check-op-return!
+           rt (symbol operation) context
+           (if (= "kanban-export" operation)
+             {:operation operation :root-id "card" :strands [] :parent-of-edges [] :depends-on-edges []}
+             {:operation operation}))
+          (swap! checked conj leaf))
+        (is (= required @checked))
+        (is (empty? (set/difference required @checked)))))))
+
 (deftest install-declares-kanban-attr-namespace
   (with-kanban
     (fn [rt]

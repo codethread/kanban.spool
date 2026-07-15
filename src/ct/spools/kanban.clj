@@ -1342,6 +1342,23 @@
                   :required? true
                   :doc "Feature or epic card strand id."}]})
 
+(def ^:private kanban-returns
+  {:subcommands
+   (into {}
+         (map (fn [subcommand]
+                [subcommand {:type :map
+                             :required {:operation :string}
+                             :extra :json}]))
+         (keys (:subcommands kanban-arg-spec)))})
+
+(def ^:private kanban-export-returns
+  {:type :map
+   :required {:operation :string
+              :root-id :string
+              :strands {:type :collection :items :json}
+              :parent-of-edges {:type :collection :items :json}
+              :depends-on-edges {:type :collection :items :json}}})
+
 (defn install!
   "Install the kanban op, batch pattern, and board queries into the active weaver."
   []
@@ -1358,11 +1375,13 @@
      :ops [(weaver/register-op! rt 'kanban
                                 {:doc "Manage the user-facing kanban work board. Run `strand kanban about` for the convention manual."
                                  :arg-spec kanban-arg-spec
+                                 :returns kanban-returns
                                  :hook-class :mutating}
                                 'ct.spools.kanban/kanban-op)
            (weaver/register-op! rt 'kanban-export
                                 {:doc "Return a card's full parent-of subtree with its internal depends-on edges."
                                  :arg-spec kanban-export-arg-spec
+                                 :returns kanban-export-returns
                                  :hook-class :read}
                                 'ct.spools.kanban/kanban-export-op)]
      :pattern (patterns/register-pattern! rt 'kanban-batch
