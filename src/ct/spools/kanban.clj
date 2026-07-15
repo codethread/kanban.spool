@@ -26,7 +26,7 @@
             [skein.api.weaver.alpha :as weaver]
             [skein.api.format.alpha :as fmt]
             [skein.api.runtime.alpha :as runtime]
-            [skein.api.spool.alpha :refer [attr-get fail! reject-unknown-keys!]]))
+            [skein.api.spool.alpha :refer [attr-get entity-projection fail! reject-unknown-keys!]]))
 
 (def ^:private card-attr :kanban/card)
 (def ^:private status-attr :kanban/status)
@@ -171,7 +171,7 @@
       (when epic
         (weaver/update rt (:id epic) {:edges [{:type "parent-of" :to (:id strand)}]}))
       (cond-> {:operation "kanban add"
-               :card (select-keys strand [:id :title :state :attributes])}
+               :card (entity-projection strand)}
         epic (assoc :epic (:id epic))))))
 
 ;; kanban-batch weave pattern
@@ -272,7 +272,7 @@
   (let [strand (require-status! "promote" (card-strand (require-non-blank! :id id)) "refinement")
         updated (update-card! strand {status-attr "pending"} nil)]
     {:operation "kanban promote"
-     :card (select-keys updated [:id :title :state :attributes])}))
+     :card (entity-projection updated)}))
 
 (defn set-priority!
   "Set an active card's priority (p1 highest urgency .. p4 someday)."
@@ -284,7 +284,7 @@
                       {:id (:id strand) :state (:state strand)})))
     (let [updated (update-card! strand {priority-attr priority} nil)]
       {:operation "kanban priority"
-       :card (select-keys updated [:id :title :state :attributes])})))
+       :card (entity-projection updated)})))
 
 (defn- claim-run-id
   "Return the run id to stamp at claim, or nil when neither flag is given.
@@ -326,7 +326,7 @@
                   run (assoc run-attr run))
           updated (update-card! strand attrs nil)]
       {:operation "kanban claim"
-       :card (select-keys updated [:id :title :state :attributes])})))
+       :card (entity-projection updated)})))
 
 (defn request-review!
   "Move a claimed kanban card into the in_review lane."
@@ -334,7 +334,7 @@
   (let [strand (require-status! "mark in_review" (card-strand (require-non-blank! :id id)) "claimed")
         updated (update-card! strand {status-attr "in_review"} nil)]
     {:operation "kanban review"
-     :card (select-keys updated [:id :title :state :attributes])}))
+     :card (entity-projection updated)}))
 
 (defn rework!
   "Move an in_review kanban card back to claimed for rework."
@@ -342,7 +342,7 @@
   (let [strand (require-status! "rework" (card-strand (require-non-blank! :id id)) "in_review")
         updated (update-card! strand {status-attr "claimed"} nil)]
     {:operation "kanban rework"
-     :card (select-keys updated [:id :title :state :attributes])}))
+     :card (entity-projection updated)}))
 
 (defn finish!
   "Close a claimed or in_review kanban card with an explicit outcome status."
@@ -357,7 +357,7 @@
                       {:id id :status (attr-value strand status-attr)})))
     (let [updated (update-card! strand {status-attr outcome} "closed")]
       {:operation "kanban finish"
-       :card (select-keys updated [:id :title :state :attributes])})))
+       :card (entity-projection updated)})))
 
 ;; ---------------------------------------------------------------------------
 ;; note compaction: shared by the notes, task, and card projections
@@ -493,7 +493,7 @@
       (weaver/update rt (:id task) {:edges (mapv (fn [dep] {:type "depends-on" :to dep}) deps)}))
     {:operation "kanban task add"
      :feature (:id feature)
-     :task (select-keys (weaver/show rt (:id task)) [:id :title :state :attributes])}))
+     :task (entity-projection (weaver/show rt (:id task)))}))
 
 (defn task-list
   "Project a feature card's tasks with their derived statuses."
@@ -563,7 +563,7 @@
                                                  (require-non-blank! :kind (get flags "--kind"))))
         {note-id :id} (notes/note! rt (:id target) text decorating)
         note (weaver/show rt note-id)
-        result {:note (select-keys note [:id :title :state :attributes])}]
+        result {:note (entity-projection note)}]
     (if (= "true" (attr-value target card-attr))
       (assoc result :card (:id target))
       (let [card (owning-card rt target)]
@@ -573,7 +573,7 @@
 (defn- summarize-strand
   "Return the compact strand shape used in card subtree output."
   [strand]
-  (select-keys strand [:id :title :state :attributes]))
+  (entity-projection strand))
 
 (defn- note-strand?
   "Return true when strand is a kanban note."

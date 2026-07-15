@@ -8,9 +8,19 @@
             [skein.api.vocab.alpha :as vocab]
             [skein.api.weaver.alpha :as weaver]
             [skein.api.format.alpha :as fmt]
+            [skein.api.spool.alpha :as spool]
             [skein.core.weaver.runtime :as weaver-runtime]
             [ct.spools.kanban :as kanban]
             [skein.test.alpha :as t]))
+
+(deftest exact-entity-projections-discard-extra-fields-and-fail-loudly
+  (let [strand {:id "s1" :title "Work" :state "active"
+                :attributes {:kind "task"} :created_at "discarded"}]
+    (is (= (dissoc strand :created_at) (spool/entity-projection strand)))
+    (doseq [field [:id :title :state :attributes]]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                            #"missing canonical entity fields"
+                            (spool/entity-projection (dissoc strand field)))))))
 
 (defn stub-projection
   "Stand-in tracker strategy for the card-view join tests.
