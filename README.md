@@ -57,6 +57,12 @@ workflow spool root it requires), but kanban never loads them itself:
                              :git/sha "<40-hex-sha-for-the-approved-commit>"}}}
 ```
 
+The workflow root can instead be a sha-pinned nested-root git coordinate on the
+Skein repo (`:git/url` + `:git/sha` + `:deps/root "spools/workflow"`); both
+forms and the version-skew convention are covered in [Skein's nested-spool
+prerequisites
+guidance](https://github.com/codethread/skein/blob/main/docs/spools/writing-shared-spools.md#nested-spool-prerequisites).
+
 Local development overlay example (`spools.local.edn`, usually gitignored):
 
 ```clojure
