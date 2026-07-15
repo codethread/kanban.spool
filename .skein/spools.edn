@@ -1,1 +1,3 @@
-{:spools {}}
+{:spools {skein.spools/guild {:local/root "../../skein-src/spools/guild"}
+          codethread/kanban {:git/url "https://github.com/codethread/kanban.spool.git"
+                             :git/sha "69c4009ba4ca58475c46606def2c3321cc806b53"}}}
