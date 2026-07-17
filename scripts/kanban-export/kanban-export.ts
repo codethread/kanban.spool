@@ -155,16 +155,16 @@ function bar(done: number, total: number): string {
 
 function badges(s: Strand): string {
   const out: string[] = [];
-  const state = isClosed(s) ? str(s.attributes["kanban/status"], "closed") : s.state;
+  const state = isClosed(s) ? str(s.attributes["kanban/outcome"], "closed") : s.state;
   out.push(`<span class="badge state-${esc(isClosed(s) ? "closed" : s.state)}">${esc(state)}</span>`);
   out.push(`<span class="badge kind">${esc(kindOf(s))}</span>`);
-  const status = str(s.attributes["kanban/status"]);
-  if (status && !isClosed(s)) out.push(`<span class="badge lane lane-${esc(status)}">${esc(status)}</span>`);
+  const lane = str(s.attributes["kanban/lane"]);
+  if (lane && !isClosed(s)) out.push(`<span class="badge lane lane-${esc(lane)}">${esc(lane)}</span>`);
   const prio = str(s.attributes["kanban/priority"]);
   if (prio) out.push(`<span class="badge prio prio-${esc(prio)}">${esc(prio)}</span>`);
   const owner = str(s.attributes["owner"]);
   if (owner) out.push(`<span class="badge owner">@${esc(owner)}</span>`);
-  if (str(s.attributes["workflow/hitl"]) === "true" || str(s.attributes["hitl"]) === "true")
+  if (str(s.attributes["workflow/checkpoint-kind"]) === "human" || str(s.attributes["hitl"]) === "true")
     out.push(`<span class="badge review">human review</span>`);
   return out.join(" ");
 }

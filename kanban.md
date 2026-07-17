@@ -12,13 +12,13 @@ The kanban spool is the user-facing work board held entirely in Skein strands. I
 
 ## Model
 
-Each card is one strand whose `kanban/status` places it in a board lane:
+Each card is one strand whose `kanban/lane` places it in a board lane:
 
 - **refinement** — an idea or undecided direction; never actionable until a human explicitly runs `kanban promote`.
 - **pending** — the actionable queue; `kanban next` serves the highest-priority (p1 first) oldest pending feature.
 - **claimed** — work has started; the claim stamps who is driving it and where.
 - **in_review** — work is under review. Rework moves it back to `claimed`; finishing moves it to `closed`.
-- **closed** — the strand is closed and `kanban/status` records the explicit outcome (`done`, `abandoned`, ...).
+- **closed** — the strand is closed, has no active lane, and `kanban/outcome` records the explicit result (`done`, `abandoned`, ...).
 
 Every card also carries a `kanban/priority` that orders lanes and `kanban next` (oldest first within a priority):
 
@@ -33,13 +33,13 @@ Card state lives under the `kanban/*` attribute topic:
 | --- | --- |
 | `kanban/card` | String `"true"` for card strands. |
 | `kanban/type` | `feature` (default) or `epic` (grouping card; `parent-of` its features). |
-| `kanban/status` | `refinement`, `pending`, `claimed`, `in_review`, or an explicit closed outcome. |
+| `kanban/lane` | Active lane: `refinement`, `pending`, `claimed`, or `in_review`. Removed on finish. |
+| `kanban/outcome` | Explicit finish result on a closed card, such as `done` or `abandoned`. |
 | `kanban/priority` | `p1`, `p2`, `p3` (default), or `p4`; cards without the attribute read as `p3`. |
 | `kanban/source` | Optional path or URL for design context (RFC, feature folder). |
-| `kanban/note` | `"true"` decoration on strands linked to a card or task by the blessed `notes` relation. |
 | `kanban/task` | `"true"` on task strands: `parent-of` children of a feature card whose status is derived, never stored. |
-| `kanban/run` | Optional tracker run-id; `kanban card` joins the bound tracker's status and ready steps (see [Tracker seam](#tracker-seam)). |
-| `kanban/devflow` | Deprecated pre-tracker run-id alias, read as a fallback for `kanban/run` (`kanban/run` wins when both are stamped). |
+| `kanban/run-id` | Optional tracker run-id; `kanban card` joins the bound tracker's status and ready steps (see [Tracker seam](#tracker-seam)). |
+| `kanban/from` | Peering provenance serialized as `<board>:<card>` from the wire `:from` map. |
 | `owner` | Who is driving the work; required at claim. |
 | `branch` | The work branch; required at claim. |
 | `worktree` | Optional worktree path. |
@@ -58,7 +58,7 @@ Task status is **derived, never stored**: a pure function of the core strand gra
 
 | Status | Derives from |
 | --- | --- |
-| `done` | the task strand is closed. |
+| `closed` | the task strand is closed. |
 | `blocked` | active, with a `depends-on` target that is not yet closed. |
 | `doing` | active, every dependency closed, and an `owner` stamped. |
 | `ready` | active, every dependency closed, and no `owner`. |
@@ -67,9 +67,10 @@ Because nothing writes the status it cannot drift the way a stored field would: 
 
 ## Notes and resume
 
-Notes are strands linked to their target by the blessed `notes` relation, not card attributes or `parent-of` children. Kanban marks its notes with
-`kanban/note`; that attribute is decoration for board views. Concurrent agents do not race a
-read-merge-write cycle, and every note keeps its own timestamp and author.
+Notes are strands linked to their target by the blessed `notes` relation, not card attributes or
+`parent-of` children. They carry the primitive's `note/text`, `note/at`, and optional `note/by`;
+kanban inherits the primitive's optional `note/kind` view hint. Concurrent agents do not race a
+read-merge-write cycle, and every note keeps its own timestamp and attribution.
 
 A note targets a **card or a task** — anything else fails loudly. Progress notes belong on the doing-task; the card's own trail stays a lean handover summary. Bulk content (review findings, pasted output) always goes on a task note:
 
@@ -81,21 +82,21 @@ strand kanban note <card-id> "Handover: impl landed, docs next" --by claude
 strand --stdin kanban note <task-id> :stdin --by claude --kind review-dump <<'NOTE'
 Review findings:
 - The parser rejects the removed flag.
-- Stored attribution remains under `author`.
+- Stored attribution remains under `note/by`.
 NOTE
 
 # Or resolve a named payload from a file.
 strand --payload review=review-findings.md kanban note <task-id> :payload/review --by claude --kind review-dump
 ```
 
-Note as you go, not at the end: record what is done, what is next, validation state, and gotchas on the doing-task as you reach them. Each task projection (`card <id>`, `task list`, the board's doing-task) carries the task's newest note as `latest-note`, so a cold agent resumes from the doing-task and its `latest-note` with no prior context. Even with no notes the doing-task still carries its body, deps, and lane:
+Note as you go, not at the end: record what is done, what is next, validation state, and gotchas on the doing-task as you reach them. Each task projection (`card <id>`, `task list`, the board's doing-task) carries the task's newest note as `latest-note`, so a cold agent resumes from the doing-task and its `latest-note` with no prior context. Even with no notes the doing-task still carries its body, dependencies, and lane:
 
 1. `strand kanban board` — claimed cards show owner, branch, worktree, and their doing-task (with its `latest-note`).
 2. `strand kanban card <id>` — the full card: tasks with their derived statuses and `latest-note`, card notes (newest first), active work subtree, and the ready frontier.
 
-Views compact what they show: note bodies past a cap (600 characters) are clipped and marked `truncated: true`; the full text stays on the note strand (`strand show <note-id>`). This keeps one long note from drowning the resume read — the card view is a projection, never the storage.
+Views compact what they show: note text past a cap (600 characters) is clipped and marked `truncated: true`; the full text stays on the note strand (`strand show <note-id>`). This keeps one long note from drowning the resume read — the card view is a projection, never the storage.
 
-A note may carry a `note/kind` decorating attr (`--kind <value>`) that views can fold or filter by; it is a core `note` attribute, not kanban-specific. The set is open and guidance-only, never an enforced enum, with four blessed values: `activity` (a progress log), `decision` (a durable choice and why), `review-dump` (bulk findings), and `summary` (a run or session wrap-up). An absent `note/kind` reads as `activity`; any other value stays a valid userland annotation. Compact note projections surface it as `kind`.
+A note may carry the primitive's `note/kind` decorating attr (`--kind <value>`) that views can fold or filter by. The set is open and guidance-only, never an enforced enum, with four suggested values: `activity` (a progress log), `decision` (a durable choice and why), `review-dump` (bulk findings), and `summary` (a run or session wrap-up). An absent value remains absent; any other value stays a valid userland annotation. Compact note projections surface it as `kind`.
 
 ## CLI op
 
@@ -104,13 +105,13 @@ Install registers one declared-subcommand operation. `strand help kanban` shows 
 ```sh
 strand kanban prime
 strand kanban about
-strand kanban add "Feature idea" [--body "Longer context"] [--source docs/rfcs/...] [--status pending|refinement] [--type feature|epic] [--epic <epic-id>] [--priority p1|p2|p3|p4]
+strand kanban add "Feature idea" [--body "Longer context"] [--source docs/rfcs/...] [--lane pending|refinement] [--type feature|epic] [--epic <epic-id>] [--priority p1|p2|p3|p4]
 strand kanban board
 strand kanban card <id>
 strand kanban next
 strand kanban priority <id> <p1|p2|p3|p4>
 strand kanban promote <id>
-strand kanban claim <id> --owner <name> --branch <branch> [--worktree /path] [--run <run-id>]
+strand kanban claim <id> --owner <name> --branch <branch> [--worktree /path] [--run-id <run-id>]
 strand kanban note <card-or-task-id> <text> [--by <name>] [--kind activity|decision|review-dump|summary]
 strand kanban task add <feature> <title> [--body "Longer context"] [--depends-on <id> ...]
 strand kanban task list <feature>
@@ -121,13 +122,13 @@ strand kanban finish <id> [--outcome done|abandoned]
 
 `prime` is the agent onboarding surface: a superset of `about` that adds the working discipline (work under a claimed card, the pick-up-next flow, the note-as-you-go/resume-from-task contract, adjacent-work awareness, and branch visibility) so repo agent docs point at it instead of duplicating conventions that then drift from the spool. `about` stays the terse command manual.
 
-`board` returns the grouped snapshot (epics, refinement/pending/claimed/in_review lanes sorted p1-first then oldest, closed count); active cards with a status outside the known lanes surface in `unknown-status` rather than being hidden. It also returns `needs-review`: a vector aggregated across claimed and in-review feature cards of `{:card :item}` entries (plus `:branch` from the claim stamp), one per card descendant that is active, in the engine ready frontier, and marks human review (`hitl`/`workflow/hitl` true, or `kind` `review`), sorted by card id then item id — the always-present cross-card review queue. `next` returns the highest-priority (p1 first) oldest active pending feature (epics are never served). `priority` restamps an active card's `kanban/priority` and fails loudly on unknown values or closed cards. `promote` is the explicit human command that moves a refinement card into the pending lane. `claim` fails loudly without `--owner` and `--branch` and refuses epics; `--worktree` is optional for direct work in the main checkout. `review` moves a claimed card to `in_review`; `rework` moves it back to `claimed`; `finish` closes a claimed or in-review card with the outcome status.
+`board` returns the grouped snapshot (epics, refinement/pending/claimed/in_review lanes sorted p1-first then oldest, closed count); active cards with a lane outside the known set surface in `unknown-lane` rather than being hidden. It also returns `needs-review`: a vector aggregated across claimed and in-review feature cards of `{:card :item}` entries (plus `:branch` from the claim stamp), one per card descendant that is active, in the engine ready frontier, and marks human review (`hitl` true, `workflow/checkpoint-kind` `human`, or `kind` `review`), sorted by card id then item id — the always-present cross-card review queue. `next` returns the highest-priority (p1 first) oldest active pending feature (epics are never served). `priority` restamps an active card's `kanban/priority` and fails loudly on unknown values or closed cards. `promote` is the explicit human command that moves a refinement card into the pending lane. `claim` fails loudly without `--owner` and `--branch` and refuses epics; `--worktree` is optional for direct work in the main checkout. `review` moves a claimed card to `in_review`; `rework` moves it back to `claimed`; `finish` closes a claimed or in-review card with an explicit `kanban/outcome`.
 
 `card` returns the resume view (card, tasks with derived statuses and `latest-note`, compact card
 notes, active work, ready frontier) plus `related`: a vector of `{:relation :strand}` entries for
 every `depends-on` edge touching the card. The relation is `depends-on` when the card is the
 dependent and `depended-on-by` when it is the dependency; entries sort by the other endpoint's id.
-Cards stamped with `kanban/run` (via `claim --run`) also carry `tracker`: the bound tracker's status
+Cards stamped with `kanban/run-id` (via `claim --run-id`) also carry `tracker`: the bound tracker's status
 for that run and its ready steps (see [Tracker seam](#tracker-seam)). `task add` hangs a task under a
 feature card (marker attr plus `parent-of`, optional `--depends-on` edges), and `task list` projects
 that card's tasks with their derived statuses (see the Task tier section). Both fail loudly on a
@@ -136,7 +137,7 @@ missing, non-card, or non-feature target. Epics group features and never own tas
 For bulk authoring, the `kanban-batch` weave pattern creates pending feature cards with bodies and `depends-on` edges atomically:
 
 ```sh
-strand weave --pattern kanban-batch --input '{"items":[{"key":"design","title":"Design feature","body":"...","priority":"p2"},{"key":"docs","title":"Write docs","deps":["design","existing-strand-id"]}]}'
+strand weave --pattern kanban-batch --input '{"items":[{"key":"design","title":"Design feature","body":"...","priority":"p2"},{"key":"docs","title":"Write docs","depends-on":["design","existing-strand-id"]}]}'
 ```
 
 ## Human view
@@ -203,8 +204,10 @@ Then activate, in order: guild first, kanban second, `install-peering!` last. `i
   :guild
   {:ns 'skein.spools.guild
    :spools ['skein.spools/guild]
-   :call 'skein.spools.guild/install!
    :required? true})
+
+(require '[skein.spools.guild :as guild])
+(guild/install! runtime)
 
 (runtime/use! runtime
   :kanban
@@ -224,7 +227,7 @@ Then activate, in order: guild first, kanban second, `install-peering!` last. `i
 
 ### Discovering and sending
 
-`kanban-peers` lists sibling weavers from mill metadata. Every peer is listed; each **running non-self** peer is probed via `guild.describe`, and `kanban-send?` is `true` when it advertises `kanban.send.v1`. A running peer that rejects `guild.describe` as an unknown op is an expected non-peering sibling (`kanban-send? false`); any other transport or protocol failure — including a malformed `guild.describe` envelope — propagates loudly. Stale peers (`running? false`) are listed but never probed. The local weaver — when it appears in the roster — is marked `self? true` and classified from the local op registry, not a socket call to itself.
+`kanban-peers` lists sibling weavers from mill metadata. Every peer is listed; each **running non-self** peer is probed via `guild list`, and `kanban-send?` is `true` when it advertises `kanban.send.v1`. A running peer that rejects `guild list` as an unknown op is an expected non-peering sibling (`kanban-send? false`); any other transport or protocol failure — including a malformed `guild list` envelope — propagates loudly. Stale peers (`running? false`) are listed but never probed. The local weaver — when it appears in the roster — is marked `self? true` and classified from the local op registry, not a socket call to itself.
 
 ```sh
 strand kanban-peers
@@ -235,7 +238,7 @@ strand kanban-peers
 #                "self?": true, "kanban-send?": true}]}
 ```
 
-`kanban-send <peer> <card-id>` resolves the local feature or epic card, preflights the target's `guild.describe` for `kanban.send.v1` (a clear error names the fix when the peer runs no peering or an older kanban), sends the payload, records a note on the local card with the created remote ids, and returns them:
+`kanban-send <peer> <card-id>` resolves the local feature or epic card, preflights the target's `guild list` for `kanban.send.v1` (a clear error names the fix when the peer runs no peering or an older kanban), sends the payload, records a note on the local card with the created remote ids, and returns them:
 
 ```sh
 strand kanban-send frontend abc12
@@ -251,14 +254,14 @@ The receive op takes **one JSON object** as its single argument (guild parses it
 {:card {:title "…"                      ; required
         :body "…" :source "…"           ; optional
         :priority "p1|p2|p3|p4"         ; optional; receiver defaults p3
-        :status "pending|refinement"}   ; optional; receiver defaults pending
+        :lane "pending|refinement"}   ; optional; receiver defaults pending
  :from {:board "backend" :card "abc12"}} ; optional provenance
 
 ;; an epic bundle: an :epic card plus one or more :features (both card maps)
 {:epic {:title "…"} :features [{:title "…"} …] :from {…}}
 ```
 
-Unknown keys, a missing title, a bad priority or status, a lone `:card`+`:epic`, an epic without features, and a malformed `:from` all fail spec validation loudly. The op returns JSON-safe ids only — `{:operation "kanban.send.v1" :card {:id …}}` for a single card, or `{:operation … :epic {:id …} :features [{:id …} …]}` for a bundle, features in input order. Every created card carries its provenance as one `kanban/from` attribute, `"<board>:<card>"` (e.g. `"backend:abc12"`), so the receiving board can trace a card to its origin without importing the source id as an identity.
+Unknown keys, a missing title, a bad priority or lane, a lone `:card`+`:epic`, an epic without features, and a malformed `:from` all fail spec validation loudly. The op returns JSON-safe ids only — `{:operation "kanban.send.v1" :card {:id …}}` for a single card, or `{:operation … :epic {:id …} :features [{:id …} …]}` for a bundle, features in input order. Every created card carries its provenance as one `kanban/from` attribute, `"<board>:<card>"` (e.g. `"backend:abc12"`), so the receiving board can trace a card to its origin without importing the source id as an identity.
 
 ## Tracker seam
 
@@ -280,8 +283,8 @@ reload — `install!` never binds a default):
   card view's `tracker` so a cold agent knows which tracker the steps come from.
 - `:project` — a fully-qualified symbol (resolved with `requiring-resolve` at call time, so a
   reload rebinds cleanly) or a function. Contract: `(project run-id)` returns
-  `{:status <string|nil> :next-steps [step ...]}`. Kanban selects each step down to the closed key
-  set `#{:id :title :kind :stage :checkpoint}`, so the card-view shape stays kanban-owned whatever
+  `{:status <string|nil> :ready [step ...]}`. Kanban selects each step down to the closed key
+  set `#{:id :title :role :stage :checkpoint}`, so the card-view shape stays kanban-owned whatever
   the tracker returns.
 
 A malformed binding is rejected loudly (unknown keys, a blank name, or a `:project` that is
@@ -289,26 +292,24 @@ neither a fully-qualified symbol nor a function). The owning Clojure specs are
 `:ct.spools.kanban/tracker-binding` for the binding,
 `:ct.spools.kanban/tracker-projection` for the strategy result, and
 `:ct.spools.kanban/tracker-view` for the public card-view shape. A projection must contain
-exactly `:status` and `:next-steps`; every step must be a map with non-blank `:id`, `:title`, and
-`:kind`. Malformed status values, missing keys, non-vector steps, and invalid step entries fail with
+exactly `:status` and `:ready`; every step must be a map with non-blank `:id`, `:title`, and
+`:role`. Malformed status values, missing keys, non-vector steps, and invalid step entries fail with
 the tracker name and run id in the error data. Kanban also validates the constructed public view,
 so malformed legacy run attributes fail instead of leaking through as an ambiguous projection.
 
-**The join.** A card names its run through the `kanban/run` attribute (`claim --run <run-id>`
-stamps it; `--devflow` remains a deprecated alias that also stamps `kanban/run`, and the legacy
-`kanban/devflow` attr is still read as a fallback). For a stamped card, `card` carries a
-`tracker` key:
+**The join.** A card names its run through the `kanban/run-id` attribute (`claim --run-id <run-id>`
+stamps it). For a stamped card, `card` carries a `tracker` key:
 
 ```json
 "tracker": {"name": "devflow",
-            "run": "widgets-run",
+            "run-id": "widgets-run",
             "status": "spec",
-            "next-steps": [{"id": "...", "title": "...", "kind": "step", "stage": "spec"}]}
+            "ready": [{"id": "...", "title": "...", "role": "step", "stage": "spec"}]}
 ```
 
 - **binding present** — the bound strategy's status and ready steps; a tracker that reports no
   active run projects a `null` status with no steps rather than hiding the key.
-- **binding absent** — `{"name": null, "run": "widgets-run", "status": null, "next-steps": []}`:
+- **binding absent** — `{"name": null, "run-id": "widgets-run", "status": null, "ready": []}`:
   the stamp is visible and the missing strategy is visible.
 - **binding throws** — the card view fails with the strategy's error. The binding is repo-owner
   config; masking its failures would violate fail-loud (TEN-003).
@@ -325,7 +326,7 @@ module (roughly fifteen lines) that composes devflow's read fns into the project
   (let [stage (some-> (devflow/feature-roots run-id) first
                       (attr-value :devflow/stage))]
     {:status stage
-     :next-steps (if stage (devflow/next-steps run-id) [])}))
+     :ready (if stage (devflow/ready run-id) [])}))
 
 (defn install! []
   (kanban/set-tracker! {:name "devflow"
@@ -342,4 +343,4 @@ stamped cards project as unbound. The consuming [README](./README.md) carries th
 Install also registers:
 
 - `kanban-cards` — all kanban card strands.
-- `kanban-unstarted` — active cards with `kanban/status=pending`.
+- `kanban-pending` — active cards with `kanban/lane=pending`.

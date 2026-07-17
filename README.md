@@ -97,7 +97,7 @@ activate first:
 ```
 
 `install!` registers the `kanban` and `kanban-export` ops, the `kanban-batch` weave pattern, the
-`kanban-cards`/`kanban-unstarted` queries, and declares the `kanban/*`
+`kanban-cards`/`kanban-pending` queries, and declares the `kanban/*`
 attribute namespace. It never binds a tracker.
 
 ### Binding a tracker (optional)

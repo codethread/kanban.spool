@@ -44,7 +44,7 @@ strand kanban claim "$card" --owner claude --branch kanban-spool --worktree /pat
 # 3. Decompose into tasks; the depends-on edges are the concurrency DAG.
 impl=$(strand kanban task add "$card" "Implement the ops" | jq -r '.task.id')
 docs=$(strand kanban task add "$card" "Write the docs" --depends-on "$impl" | jq -r '.task.id')
-strand update "$impl" --attr owner=claude   # owned + deps met = the doing-task
+strand update "$impl" --attr owner=claude   # owned + dependencies met = the doing-task
 
 # 4. Note the doing-task as you reach decisions and progress, not at the end.
 strand kanban note "$impl" "Chose lane names over statuses because X" --by claude --kind decision
@@ -98,8 +98,8 @@ strand kanban finish "$card" --outcome done
   `in_review`, so board readers can see work waiting on review. `rework` moves it
   back to `claimed` when the branch needs changes.
 - **`finish` records an explicit outcome.** `done` and `abandoned` both close the
-  card, but the `kanban/status` outcome stays on the strand, so the closed lane
-  keeps an honest history rather than a wall of indistinguishable "closed".
+  card, but `kanban/outcome` stays on the strand, preserving honest history
+  rather than a wall of indistinguishable "closed".
 
 Honest source: the pick-up flow authored in the spool's own `prime` payload (`:pick-up-next-card`, `:working-agreement`) and this repo's `CLAUDE.md` kanban convention, proven end to end by `kanban-add-next-claim-and-finish-round-trip`.
 
@@ -109,14 +109,14 @@ Honest source: the pick-up flow authored in the spool's own `prime` payload (`:p
 
 **Situation.** A user hands you a list of features at once — often with dependencies between them ("docs after the design lands") — and you want them all as pending cards in a single atomic step, with the blockers already wired.
 
-**Composition.** One `kanban-batch` weave. Each item is a card; `deps` values that match a sibling `key` become batch-local `depends-on` edges, and any other `deps` value is treated as an existing strand id.
+**Composition.** One `kanban-batch` weave. Each item is a card; `depends-on` values that match a sibling `key` become batch-local `depends-on` edges, and any other `depends-on` value is treated as an existing strand id.
 
 ```sh
 strand weave --pattern kanban-batch --input '{
   "items": [
     {"key": "design", "title": "Design the board model", "body": "Lanes + priority ladder", "priority": "p2"},
-    {"key": "impl",   "title": "Implement the ops",       "deps": ["design"]},
-    {"key": "docs",   "title": "Write the cookbook",      "deps": ["impl", "gfg6x"]}
+    {"key": "impl",   "title": "Implement the ops",       "depends-on": ["design"]},
+    {"key": "docs",   "title": "Write the cookbook",      "depends-on": ["impl", "gfg6x"]}
   ]
 }'
 ```
@@ -126,19 +126,19 @@ strand weave --pattern kanban-batch --input '{
 - **Atomic beats a loop of `add`.** One weave creates every card and every edge
   in a single transaction, so a mid-list failure never leaves you with half a
   backlog and dangling references.
-- **Sibling keys and durable ids share one `deps` list.** A dep that matches a
+- **Sibling keys and durable ids share one `depends-on` list.** A dependency that matches a
   sibling `key` (`design`) resolves to the card being created alongside it; any
   other value (`gfg6x`) is a durable strand id. That lets a new backlog depend on
   both its own siblings and existing work without two different syntaxes
   (`kanban-batch` docstring;
   `kanban-batch-weave-creates-cards-and-dependencies`).
 - **It fails loudly, so a typo can't rot silently.** Duplicate keys, an unknown
-  priority, an unexpected item key, or a `deps` id that doesn't exist all abort
+  priority, an unexpected item key, or a `depends-on` id that doesn't exist all abort
   the whole weave with a specific error rather than creating a subtly wrong
   graph (`kanban-batch-weave-fails-loudly`).
 - **Cards land pending at p3 by default.** Batch cards are actionable
   immediately; set `priority` per item to jump the queue, and reach for a
-  refinement card (via plain `kanban add --status refinement`) only when an idea
+  refinement card (via plain `kanban add --lane refinement`) only when an idea
   isn't ready to be worked.
 
 Honest source: the `kanban-batch` pattern in the spool source and its two test cases, plus the bulk-authoring section of the contract doc.
@@ -230,7 +230,7 @@ strand kanban card "$card"          # tasks, notes, active work, ready frontier,
 
 **Why this shape.**
 
-- **The task tier is the resume point.** The doing-task carries its body, deps,
+- **The task tier is the resume point.** The doing-task carries its body, dependencies,
   and lane, and its `latest-note` — surfaced inline on every task projection —
   records what's done, what's next, the validation state, and gotchas, so the
   resume path needs no prior conversation and no extra note query. The
@@ -238,7 +238,7 @@ strand kanban card "$card"          # tasks, notes, active work, ready frontier,
   with no notes the doing-task alone tells you where the work stands
   (`card-view`; contract [Notes and resume](./kanban.md#notes-and-resume)).
 - **Notes are closed child strands, not an attribute.** Each note keeps its own
-  timestamp and author, and concurrent agents appending notes never race a
+  timestamp and `note/by` attribution, and concurrent agents appending notes never race a
   read-merge-write cycle on one attribute. That's why two agents can both leave
   notes on a hot card without clobbering each other (`note!` docstring).
 - **The card view is the single resume entry point.** It filters the subtree to
@@ -263,7 +263,9 @@ strand kanban board | jq '.needs-review'
 # => [{"card": "...", "branch": "board-rewrite", "item": {"id": "...", "title": "Review the ops"}}]
 ```
 
-To feed that queue, mark review work as such when you build the subtree — a `kind: review` strand, or one flagged `hitl` / `workflow/hitl`:
+To feed that queue, mark review work as such when you build the subtree — a
+`kind: review` strand, one flagged `hitl`, or a workflow checkpoint with
+`workflow/checkpoint-kind=human`:
 
 ```sh
 review=$(strand add "Review the ops" --attr kind=review | jq -r '.id')
@@ -286,7 +288,7 @@ strand update "$review" --edge depends-on:"$impl"   # stays out of the queue unt
   claim-time `branch` rides along on every entry, so a reviewer knows which
   worktree to check out before reading the diff.
 - **What counts as review is a small, open vocabulary.** `kind: review`, `hitl`,
-  or `workflow/hitl` all qualify, which is why engine review gates and ad-hoc
+  or `workflow/checkpoint-kind=human` all qualify, which is why engine review gates and ad-hoc
   review strands both show up in the same queue without kanban knowing about
   either (`review-item?`; spool `prime` `:staying-aware`).
 
@@ -323,7 +325,9 @@ In BOTH repos, `.skein/config.json` publishes a portable weaver name — set
 
 (runtime/use! runtime :guild
   {:ns 'skein.spools.guild :spools ['skein.spools/guild]
-   :call 'skein.spools.guild/install! :required? true})
+   :required? true})
+(require '[skein.spools.guild :as guild])
+(guild/install! runtime)
 (runtime/use! runtime :kanban
   {:ns 'ct.spools.kanban :spools ['codethread/kanban]
    :call 'ct.spools.kanban/install! :required? true})
@@ -350,8 +354,8 @@ strand kanban-send frontend "$card"
 - **Guild is approved like any other spool.** Peering's receive op is a guild op,
   so the consuming workspace approves `skein.spools/guild` in `spools.edn` and
   syncs it exactly as it approves kanban — there is no separate install path and
-  no classpath magic. Approving both is what lets `install-peering!` find
-  `guild.describe` at activation (contract [Peering](./kanban.md#peering);
+  no classpath magic. Approving both is what lets `install-peering!` find the
+  `guild` op at activation (contract [Peering](./kanban.md#peering);
   `install-peering-requires-guild-first` in `kanban_peering_test.clj`).
 - **Activation order is a hard prerequisite.** `install-peering!` fails loudly if
   guild or the kanban board op is not already registered, so the `:after [:guild

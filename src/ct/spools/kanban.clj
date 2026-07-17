@@ -4,8 +4,9 @@
   Cards are the user<->agent tracking surface: everything a user asks for is a
   `feature` card (occasionally grouped under an `epic`), and every agent
   working directly with a user works under a claimed card. All card state
-  lives under `kanban/*` attributes; `kanban/status` is the board lane
-  (`refinement` -> `pending` -> `claimed` -> `in_review` -> explicit closed outcome) and
+  lives under `kanban/*` attributes; `kanban/lane` is the active board lane
+  (`refinement` -> `pending` -> `claimed` -> `in_review`) and `kanban/outcome`
+  records a finished card's outcome. The
   `kanban/priority` (p1 immediate blocker .. p4 someday, default p3) orders
   lanes and `kanban next`.
 
@@ -29,19 +30,15 @@
             [skein.api.spool.alpha :refer [attr-get entity-projection fail! reject-unknown-keys!]]))
 
 (def ^:private card-attr :kanban/card)
-(def ^:private status-attr :kanban/status)
+(def ^:private lane-attr :kanban/lane)
+(def ^:private outcome-attr :kanban/outcome)
 (def ^:private type-attr :kanban/type)
 (def ^:private priority-attr :kanban/priority)
-(def ^:private note-attr :kanban/note)
+(def ^:private note-kind-attr :note/kind)
 (def ^:private task-attr :kanban/task)
-(def ^:private run-attr :kanban/run)
-(def ^:private devflow-attr
-  "Deprecated pre-tracker run-id attr. Read as a fallback when kanban/run is
-  unstamped so cards claimed before the tracker seam still project their run;
-  RFC-022.D6 step 4 drops this fallback once no live cards carry it."
-  :kanban/devflow)
+(def ^:private run-id-attr :kanban/run-id)
 
-(def ^:private addable-statuses #{"pending" "refinement"})
+(def ^:private addable-lanes #{"pending" "refinement"})
 (def ^:private active-lanes #{"refinement" "pending" "claimed" "in_review"})
 (def ^:private card-types #{"feature" "epic"})
 (def ^:private card-priorities #{"p1" "p2" "p3" "p4"})
@@ -94,20 +91,19 @@
 (defn- card-attributes
   "Return the attributes for a newly added kanban card strand."
   [flags]
-  (let [status (or (get flags "--status") "pending")
+  (let [lane (or (get flags "--lane") "pending")
         type (or (get flags "--type") "feature")
         priority (require-priority! (or (get flags "--priority") default-priority))]
-    (when-not (contains? addable-statuses status)
-      (throw (ex-info "kanban add --status must be pending or refinement"
-                      {:status status :allowed (sort addable-statuses)})))
+    (when-not (contains? addable-lanes lane)
+      (throw (ex-info "kanban add --lane must be pending or refinement"
+                      {:lane lane :allowed (sort addable-lanes)})))
     (when-not (contains? card-types type)
       (throw (ex-info "kanban add --type must be feature or epic"
                       {:type type :allowed (sort card-types)})))
     (cond-> {card-attr "true"
-             status-attr status
+             lane-attr lane
              type-attr type
-             priority-attr priority
-             :kind type}
+             priority-attr priority}
       (get flags "--body") (assoc :body (get flags "--body"))
       (get flags "--source") (assoc :kanban/source (get flags "--source")))))
 
@@ -117,7 +113,7 @@
   (cond-> {:id (:id strand)
            :title (:title strand)
            :state (:state strand)
-           :status (attr-value strand status-attr)
+           :lane (attr-value strand lane-attr)
            :type (card-type strand)
            :priority (card-priority strand)
            :created_at (:created_at strand)}
@@ -179,9 +175,9 @@
 (s/def ::key ::non-blank-string)
 (s/def ::title ::non-blank-string)
 (s/def ::body ::non-blank-string)
-(s/def ::deps (s/coll-of ::non-blank-string :kind vector?))
+(s/def ::depends-on (s/coll-of ::non-blank-string :kind vector?))
 (s/def ::priority card-priorities)
-(def ^:private batch-item-keys #{:key :title :body :deps :priority})
+(def ^:private batch-item-keys #{:key :title :body :depends-on :priority})
 (def ^:private batch-input-keys #{:items})
 
 (defn- known-keys?
@@ -193,7 +189,7 @@
   (s/and map?
          #(known-keys? batch-item-keys %)
          (s/keys :req-un [::key ::title]
-                 :opt-un [::body ::deps ::priority])))
+                 :opt-un [::body ::depends-on ::priority])))
 (s/def ::items (s/coll-of ::batch-item :kind vector? :min-count 1))
 (s/def ::kanban-batch-input
   (s/and map?
@@ -215,7 +211,7 @@
 
   Input shape: {:items [{:key \"slug\" :title \"Title\" :body \"optional\"
   :priority \"p1|p2|p3|p4 (optional, default p3)\"
-  :deps [\"sibling-key-or-existing-strand-id\"]}]}. `deps` values matching sibling
+  :depends-on [\"sibling-key-or-existing-strand-id\"]}]}. `depends-on` values matching sibling
   keys become batch-local edges; all other values are treated as durable strand
   ids and fail loudly if absent."
   [{:keys [input]}]
@@ -224,30 +220,30 @@
     (when-let [duplicate-key (duplicate-item keys)]
       (throw (ex-info "kanban-batch item keys must be unique" {:key duplicate-key})))
     (let [sibling-keys (set keys)]
-      (mapv (fn [{:keys [key title body deps priority]}]
+      (mapv (fn [{:keys [key title body depends-on priority]}]
               (cond-> {:ref (item-ref key)
                        :title title
                        :attributes (card-attributes (cond-> {}
                                                       body (assoc "--body" body)
                                                       priority (assoc "--priority" priority)))}
-                (seq deps)
+                (seq depends-on)
                 (assoc :edges (mapv (fn [dep]
                                       {:type "depends-on"
                                        :to (if (contains? sibling-keys dep)
                                              (item-ref dep)
                                              dep)})
-                                    deps))))
+                                    depends-on))))
             items))))
 
-(defn- require-status!
-  "Return strand when it is active with the expected kanban status."
+(defn- require-lane!
+  "Return strand when it is active in the expected kanban lane."
   [op strand expected]
   (when-not (= "active" (:state strand))
     (throw (ex-info (str "Kanban card must be active to " op)
                     {:id (:id strand) :state (:state strand)})))
-  (when-not (= expected (attr-value strand status-attr))
+  (when-not (= expected (attr-value strand lane-attr))
     (throw (ex-info (str "Kanban card must be " expected " to " op)
-                    {:id (:id strand) :status (attr-value strand status-attr)})))
+                    {:id (:id strand) :lane (attr-value strand lane-attr)})))
   strand)
 
 (defn- update-card!
@@ -269,8 +265,8 @@
 (defn promote!
   "Move a refinement card into the pending lane (an explicit human act)."
   [id]
-  (let [strand (require-status! "promote" (card-strand (require-non-blank! :id id)) "refinement")
-        updated (update-card! strand {status-attr "pending"} nil)]
+  (let [strand (require-lane! "promote" (card-strand (require-non-blank! :id id)) "refinement")
+        updated (update-card! strand {lane-attr "pending"} nil)]
     {:operation "kanban promote"
      :card (entity-projection updated)}))
 
@@ -287,75 +283,64 @@
        :card (entity-projection updated)})))
 
 (defn- claim-run-id
-  "Return the run id to stamp at claim, or nil when neither flag is given.
-
-  `--run` is the canonical flag; `--devflow` stays a deprecated alias that stamps
-  the same `kanban/run` attr. Both are blank-guarded, and passing both at once
-  fails loudly rather than silently preferring one."
+  "Return the run id to stamp at claim, or nil when `--run-id` is absent."
   [flags]
-  (let [run (get flags "--run")
-        devflow (get flags "--devflow")]
-    (when (and run devflow)
-      (throw (ex-info "kanban claim accepts --run or --devflow, not both"
-                      {:run run :devflow devflow})))
-    (cond
-      run (require-non-blank! :run run)
-      devflow (require-non-blank! :devflow devflow))))
+  (when-let [run (get flags "--run-id")]
+    (require-non-blank! :run-id run)))
 
 (defn claim!
   "Claim a pending feature card, stamping the work-root attributes.
 
   `--owner` and `--branch` are mandatory so every claimed card answers who is
   driving it and on which branch; `--worktree` is optional (direct work in the
-  main checkout has no separate worktree). `--run` optionally names the card's
+  main checkout has no separate worktree). `--run-id` optionally names the card's
   tracker run so `kanban card` can join the bound tracker's status and ready
-  steps; `--devflow` is a deprecated alias that stamps the same `kanban/run`
-  attr. Epics group work and are never claimed themselves."
+  steps. Epics group work and are never claimed themselves."
   [id flags]
-  (let [strand (require-status! "claim" (card-strand (require-non-blank! :id id)) "pending")]
+  (let [strand (require-lane! "claim" (card-strand (require-non-blank! :id id)) "pending")]
     (when (= "epic" (card-type strand))
       (throw (ex-info "Kanban epics cannot be claimed; claim a feature under the epic"
                       {:id (:id strand)})))
     (let [owner (require-flag! "kanban claim" flags "--owner")
           branch (require-flag! "kanban claim" flags "--branch")
           run (claim-run-id flags)
-          attrs (cond-> {status-attr "claimed"
+          attrs (cond-> {lane-attr "claimed"
                          :owner owner
                          :branch branch}
                   (get flags "--worktree") (assoc :worktree (get flags "--worktree"))
-                  run (assoc run-attr run))
+                  run (assoc run-id-attr run))
           updated (update-card! strand attrs nil)]
       {:operation "kanban claim"
        :card (entity-projection updated)})))
 
-(defn request-review!
+(defn review!
   "Move a claimed kanban card into the in_review lane."
   [id]
-  (let [strand (require-status! "mark in_review" (card-strand (require-non-blank! :id id)) "claimed")
-        updated (update-card! strand {status-attr "in_review"} nil)]
+  (let [strand (require-lane! "mark in_review" (card-strand (require-non-blank! :id id)) "claimed")
+        updated (update-card! strand {lane-attr "in_review"} nil)]
     {:operation "kanban review"
      :card (entity-projection updated)}))
 
 (defn rework!
   "Move an in_review kanban card back to claimed for rework."
   [id]
-  (let [strand (require-status! "rework" (card-strand (require-non-blank! :id id)) "in_review")
-        updated (update-card! strand {status-attr "claimed"} nil)]
+  (let [strand (require-lane! "rework" (card-strand (require-non-blank! :id id)) "in_review")
+        updated (update-card! strand {lane-attr "claimed"} nil)]
     {:operation "kanban rework"
      :card (entity-projection updated)}))
 
 (defn finish!
-  "Close a claimed or in_review kanban card with an explicit outcome status."
+  "Close a claimed or in_review kanban card with an explicit outcome."
   [id flags]
   (let [id (require-non-blank! :id id)
         strand (card-strand id)
         outcome (or (get flags "--outcome") "done")]
     (when-not (= "active" (:state strand))
       (throw (ex-info "Kanban card must be active to finish" {:id id :state (:state strand)})))
-    (when-not (contains? #{"claimed" "in_review"} (attr-value strand status-attr))
+    (when-not (contains? #{"claimed" "in_review"} (attr-value strand lane-attr))
       (throw (ex-info "Kanban card must be claimed or in_review to finish"
-                      {:id id :status (attr-value strand status-attr)})))
-    (let [updated (update-card! strand {status-attr outcome} "closed")]
+                      {:id id :lane (attr-value strand lane-attr)})))
+    (let [updated (update-card! strand {lane-attr nil outcome-attr outcome} "closed")]
       {:operation "kanban finish"
        :card (entity-projection updated)})))
 
@@ -363,8 +348,8 @@
 ;; note compaction: shared by the notes, task, and card projections
 ;; ---------------------------------------------------------------------------
 
-(def ^:private note-body-cap
-  "Length past which card/task views clip a note body.
+(def ^:private note-text-cap
+  "Length past which card/task views clip note text.
 
   Sized to keep whole activity and decision notes intact while folding bulk
   content (review dumps, pasted output) that would otherwise drown the resume
@@ -374,19 +359,19 @@
 (defn- compact-note
   "Return the compact note shape used in card and task output.
 
-  Bodies past `note-body-cap` are clipped and marked `:truncated true`; the
-  full text stays on the note strand (`strand show <note-id>`). Carries the
-  open `note/kind` view hint as `:kind` when the note is stamped with one."
+  Note text past `note-text-cap` is clipped and marked `:truncated true`; the
+  full note stays on the note strand (`strand show <note-id>`). Carries the
+  primitive's open `note/kind` view hint as `:kind` when stamped."
   [strand]
-  (let [body (attr-value strand :note/text)
-        clipped? (and (string? body) (> (count body) note-body-cap))]
+  (let [note (attr-value strand :note/text)
+        clipped? (and (string? note) (> (count note) note-text-cap))]
     (cond-> {:id (:id strand)
              :title (:title strand)
-             :body (if clipped? (str (subs body 0 note-body-cap) " …") body)
-             :created_at (:created_at strand)}
+             :note (if clipped? (str (subs note 0 note-text-cap) " …") note)
+             :at (or (attr-value strand :note/at) (:created_at strand))}
       clipped? (assoc :truncated true)
-      (attr-value strand :author) (assoc :author (attr-value strand :author))
-      (attr-value strand :note/kind) (assoc :kind (attr-value strand :note/kind)))))
+      (attr-value strand :note/by) (assoc :by (attr-value strand :note/by))
+      (attr-value strand note-kind-attr) (assoc :kind (attr-value strand note-kind-attr)))))
 
 (defn- latest-notes-by-target
   "Return {target-strand-id compact-newest-note} for the given strand ids.
@@ -416,7 +401,7 @@
 (defn- feature-tasks
   "Return a feature card's direct `parent-of` task strands, sorted by id.
 
-  Closed tasks are kept (they read as `done`); only the marker attr selects a
+  Closed tasks are kept (they read as `closed`); only the marker attr selects a
   task, so non-task children (plans, reviews, notes) never leak in."
   [rt feature-id]
   (let [task-ids (mapv :to_strand_id (graph/outgoing-edges rt [feature-id] "parent-of"))]
@@ -429,12 +414,12 @@
   "Derive a task's status from core graph state and the core `owner` attr only.
 
   `dep-states` is the seq of `:state` values of the task's `depends-on` targets.
-  Reads no execution-engine vocabulary: `done` on a closed strand,
+  Reads no execution-engine vocabulary: `closed` on a closed strand,
   `blocked` while any dependency is unclosed, then `doing`/`ready` split on
   whether an `owner` is stamped."
   [task dep-states]
   (cond
-    (= "closed" (:state task)) "done"
+    (= "closed" (:state task)) "closed"
     (some #(not= "closed" %) dep-states) "blocked"
     (some? (attr-value task :owner)) "doing"
     :else "ready"))
@@ -454,7 +439,7 @@
   Batches the `depends-on` frontier and the incoming `notes` reads: one edge
   lookup across every task, one state lookup across every dependency, one
   note sweep — so the projection derives without a per-task round trip.
-  `:latest-note` (compact, body-clipped) is the doing-task resume read; tasks
+  `:latest-note` (compact, text-clipped) is the doing-task resume read; tasks
   with no notes simply omit it."
   [rt tasks]
   (let [dep-edges (graph/outgoing-edges rt (mapv :id tasks) "depends-on")
@@ -545,9 +530,9 @@
   "Append a note to a card or task via the blessed notes relation.
 
   The note rides the shared `notes` edge (`skein.api.notes.alpha/note!`) with
-  `kanban/note`, `kind`, and optional `author`/`note/kind` decorating attrs,
-  so concurrent agents never race a read-merge-write cycle and every note
-  keeps its own timestamp and author. Note the doing-task as you go — that is
+  optional inherited `note/by` attribution and the kanban-owned
+  `note/kind` view hint, so concurrent agents never race a
+  read-merge-write cycle and every note keeps its own timestamp and attribution. Note the doing-task as you go — that is
   what `kanban card <id>` surfaces as each task's `:latest-note` — and keep
   card notes to lean handover summaries. `--kind` stamps the open `note/kind`
   view hint (blessed values: activity, decision, review-dump, summary). A
@@ -556,14 +541,15 @@
   (let [target (note-target (require-non-blank! :id id))
         text (require-non-blank! :text text)
         rt (current/runtime)
-        decorating (cond-> {note-attr "true"
-                            :kind "note"}
-                     (get flags "--by") (assoc :author (get flags "--by"))
-                     (get flags "--kind") (assoc :note/kind
-                                                 (require-non-blank! :kind (get flags "--kind"))))
+        decorating (cond-> {}
+                     (get flags "--by") (assoc :by (get flags "--by"))
+                     (get flags "--kind") (assoc note-kind-attr
+                                                 (require-non-blank! :kind
+                                                                     (get flags "--kind"))))
         {note-id :id} (notes/note! rt (:id target) text decorating)
         note (weaver/show rt note-id)
-        result {:note (entity-projection note)}]
+        result {:operation "kanban note"
+                :strand (entity-projection note)}]
     (if (= "true" (attr-value target card-attr))
       (assoc result :card (:id target))
       (let [card (owning-card rt target)]
@@ -576,9 +562,9 @@
   (entity-projection strand))
 
 (defn- note-strand?
-  "Return true when strand is a kanban note."
+  "Return true when strand carries the blessed note primitive's text."
   [strand]
-  (= "true" (attr-value strand note-attr)))
+  (some? (attr-value strand :note/text)))
 
 (defn- truthy-attr?
   "Return true for a JSON-decoded boolean true or its string form."
@@ -588,10 +574,11 @@
 (defn- review-item?
   "Return true when strand marks itself for human review.
 
-  Any of hitl, workflow/hitl (boolean true or \"true\"), or kind \"review\"."
+  Any of bare hitl (boolean true or \"true\"), workflow/checkpoint-kind
+  \"human\", or kind \"review\"."
   [strand]
   (or (truthy-attr? (attr-value strand :hitl))
-      (truthy-attr? (attr-value strand :workflow/hitl))
+      (= "human" (attr-value strand :workflow/checkpoint-kind))
       (= "review" (attr-value strand :kind))))
 
 (defn- card-relations
@@ -661,26 +648,26 @@
   (s/and map?
          #(s/valid? ::non-blank-string (:id %))
          #(s/valid? ::non-blank-string (:title %))
-         #(s/valid? ::non-blank-string (:kind %))))
+         #(s/valid? ::non-blank-string (:role %))))
 (s/def ::tracker-steps (s/coll-of ::tracker-step :kind vector?))
 (s/def ::tracker-projection
   (s/and map?
-         #(known-keys? #{:status :next-steps} %)
+         #(known-keys? #{:status :ready} %)
          #(contains? % :status)
-         #(contains? % :next-steps)
+         #(contains? % :ready)
          #(s/valid? ::tracker-status (:status %))
-         #(s/valid? ::tracker-steps (:next-steps %))))
+         #(s/valid? ::tracker-steps (:ready %))))
 (s/def ::tracker-view
   (s/and map?
-         #(known-keys? #{:name :run :status :next-steps} %)
+         #(known-keys? #{:name :run-id :status :ready} %)
          #(contains? % :name)
-         #(contains? % :run)
+         #(contains? % :run-id)
          #(contains? % :status)
-         #(contains? % :next-steps)
+         #(contains? % :ready)
          #(or (nil? (:name %)) (s/valid? ::tracker-name (:name %)))
-         #(s/valid? ::non-blank-string (:run %))
+         #(s/valid? ::non-blank-string (:run-id %))
          #(s/valid? ::tracker-status (:status %))
-         #(s/valid? ::tracker-steps (:next-steps %))))
+         #(s/valid? ::tracker-steps (:ready %))))
 
 (def ^:private state-version
   "Shape version for kanban's runtime spool-state map. Bump whenever `new-state`'s
@@ -725,7 +712,7 @@
   The binding is `{:name <non-blank-string> :project <fq-symbol-or-fn>}`. `:name`
   surfaces in `about` and the card view so a cold agent knows which convention
   the projected steps follow; `:project` is `(fn [run-id] -> {:status <string|nil>
-  :next-steps [step ...]})`, resolved with `requiring-resolve` at call time when a
+  :ready [step ...]})`, resolved with `requiring-resolve` at call time when a
   symbol so a config reload rebinds cleanly. Rebinding replaces the prior value;
   pass a valid binding after every weaver startup or config reload. `install!`
   never binds a default. The binding is validated against `::tracker-binding`."
@@ -736,7 +723,7 @@
 (def ^:private tracker-step-keys
   "Closed key set kanban projects from each tracker step, keeping the card-view
   shape kanban-owned regardless of the bound strategy's richer step maps."
-  [:id :title :kind :stage :checkpoint])
+  [:id :title :role :stage :checkpoint])
 
 (defn- resolve-project
   "Resolve a tracker binding's :project to a callable fn at call time.
@@ -749,14 +736,10 @@
     (or (requiring-resolve project)
         (fail! "Tracker :project symbol cannot be resolved" {:project project}))))
 
-(defn- card-run
-  "Return the run id stamped on a card, or nil for unstamped cards.
-
-  Reads the canonical `kanban/run` attr, falling back to the deprecated
-  `kanban/devflow` attr; `kanban/run` wins when both are stamped."
+(defn- card-run-id
+  "Return the `kanban/run-id` stamped on a card, or nil for unstamped cards."
   [card]
-  (or (attr-value card run-attr)
-      (attr-value card devflow-attr)))
+  (attr-value card run-id-attr))
 
 (defn- validate-projection!
   "Return projection when it satisfies `::tracker-projection`.
@@ -767,12 +750,12 @@
   (when-not (s/valid? ::tracker-projection projection)
     (fail! "Tracker projection does not match its owning spec"
            {:tracker (:name binding)
-            :run run
+            :run-id run
             :projection projection
             :spec ::tracker-projection
-            :allowed {:keys [:status :next-steps]
+            :allowed {:keys [:status :ready]
                       :status "string or nil"
-                      :next-steps "vector of maps"}
+                      :ready "vector of maps"}
             :explain (s/explain-data ::tracker-projection projection)}))
   projection)
 
@@ -784,20 +767,20 @@
            {:card (:id card)
             :view view
             :spec ::tracker-view
-            :allowed {:keys [:name :run :status :next-steps]
+            :allowed {:keys [:name :run-id :status :ready]
                       :name "non-blank string or nil"
-                      :run "non-blank string"
+                      :run-id "non-blank string"
                       :status "string or nil"
-                      :next-steps "vector of maps with non-blank :id, :title, and :kind"}
+                      :ready "vector of maps with non-blank :id, :title, and :role"}
             :explain (s/explain-data ::tracker-view view)}))
   view)
 
 (defn- tracker-join
   "Return the card's tracker run projection, or nil for unstamped cards.
 
-  The card names its run through `kanban/run` (`kanban/devflow` read as a
-  fallback). With a tracker bound (`set-tracker!`), the bound strategy projects
-  the run's status and ready steps, and kanban trims each step to its own closed
+  The card names its run through `kanban/run-id`. With a tracker bound
+  (`set-tracker!`), the bound strategy projects the run's status and ready
+  steps, and kanban trims each step to its own closed
   key set so the card-view shape stays kanban-owned (RFC-022.G3); a tracker that
   reports no active run projects an honest nil status with no steps. A stamped
   card in a world with no binding projects as `{:name nil ...}` — the stamp
@@ -806,17 +789,17 @@
   would violate TEN-003. The strategy result is validated against
   `::tracker-projection`; the returned public shape is `::tracker-view`."
   [card]
-  (when-let [run (card-run card)]
+  (when-let [run (card-run-id card)]
     (validate-tracker-view!
      card
      (if-let [binding @(tracker-binding)]
        (let [projection (validate-projection!
                          binding run ((resolve-project (:project binding)) run))]
          {:name (:name binding)
-          :run run
+          :run-id run
           :status (:status projection)
-          :next-steps (mapv #(select-keys % tracker-step-keys) (:next-steps projection))})
-       {:name nil :run run :status nil :next-steps []}))))
+          :ready (mapv #(select-keys % tracker-step-keys) (:ready projection))})
+       {:name nil :run-id run :status nil :ready []}))))
 
 (defn card-view
   "Return one card joined to its notes, tasks, work, and frontier.
@@ -825,7 +808,7 @@
   card lives here. `:tasks` projects the feature card's child tasks with the
   four derived statuses (empty for cards that carry no task tier), and
   `:tracker` joins the bound tracker's run status and ready steps for cards
-  stamped with `kanban/run` (see `tracker-join`)."
+  stamped with `kanban/run-id` (see `tracker-join`)."
   [id]
   (let [rt (current/runtime)
         card (card-strand (require-non-blank! :id id))
@@ -867,7 +850,7 @@
   []
   (some->> (cards)
            (filter #(and (= "active" (:state %))
-                         (= "pending" (attr-value % status-attr))
+                         (= "pending" (attr-value % lane-attr))
                          (= "feature" (card-type %))))
            by-priority
            first
@@ -929,20 +912,20 @@
         active (filter #(= "active" (:state %)) all)
         epics (filterv #(= "epic" (card-type %)) active)
         features (remove #(= "epic" (card-type %)) active)
-        claimed-features (filter #(= "claimed" (attr-value % status-attr)) features)
-        review-features (filter #(= "in_review" (attr-value % status-attr)) features)
+        claimed-features (filter #(= "claimed" (attr-value % lane-attr)) features)
+        review-features (filter #(= "in_review" (attr-value % lane-attr)) features)
         membership (epic-membership rt epics)
         with-epic (fn [card]
                     (cond-> (compact-card card)
                       (membership (:id card)) (assoc :epic (membership (:id card)))))
-        lane (fn [status]
+        lane (fn [lane-name]
                (->> features
-                    (filter #(= status (attr-value % status-attr)))
+                    (filter #(= lane-name (attr-value % lane-attr)))
                     by-priority
                     (mapv with-epic)))
         known-lanes active-lanes
         unknown (->> features
-                     (remove #(contains? known-lanes (attr-value % status-attr)))
+                     (remove #(contains? known-lanes (attr-value % lane-attr)))
                      by-created
                      (mapv with-epic))]
     (cond-> {:operation "kanban board"
@@ -962,7 +945,7 @@
              :needs-review (needs-review-entries rt (concat claimed-features review-features))
              :closed {:count (count (filter #(= "closed" (:state %)) all))}}
       ;; active cards outside the known lanes are drift; surface them loudly
-      (seq unknown) (assoc :unknown-status unknown))))
+      (seq unknown) (assoc :unknown-lane unknown))))
 
 ;; ---------------------------------------------------------------------------
 ;; ASCII board: REPL human view (the CLI stays JSON-only per TEN-006)
@@ -1018,7 +1001,7 @@
 
 (defn board-str
   "Render a `board` result map as a stacked-lane ASCII board string."
-  [{:keys [epics refinement pending claimed in_review needs-review closed unknown-status]}]
+  [{:keys [epics refinement pending claimed in_review needs-review closed unknown-lane]}]
   (let [rule (str/join (repeat board-width \=))]
     (->> (concat
           [(str "KANBAN BOARD  (closed: " (:count closed) ")") rule]
@@ -1033,8 +1016,8 @@
           (lane-lines "IN REVIEW" in_review wip-row)
           [""]
           (lane-lines "NEEDS REVIEW" needs-review review-line)
-          (when (seq unknown-status)
-            (into [""] (lane-lines "UNKNOWN STATUS (drift!)" unknown-status card-line))))
+          (when (seq unknown-lane)
+            (into [""] (lane-lines "UNKNOWN LANE (drift!)" unknown-lane card-line))))
          (str/join "\n"))))
 
 (defn print-board!
@@ -1050,27 +1033,26 @@
            :pending "actionable queue; `kanban next` serves the highest-priority (p1 first) oldest feature"
            :claimed "work started; owner/branch (and worktree) stamped at claim"
            :in_review "work is under review; rework returns it to claimed, finish closes it"
-           :closed "finished with kanban/status recording the outcome (done, abandoned, ...)"}
+           :closed "finished with kanban/outcome recording the result (done, abandoned, ...)"}
    :priorities {:p1 "immediate blocker; must be done first — e.g. anything requiring a mill/weaver restart or a breaking change"
                 :p2 "high value bug fixes or high leverage features"
                 :p3 "the default: most things"
                 :p4 "maybe one day — the never-ending someday list"}
    :attributes {card-attr "true"
                 type-attr "feature (default) | epic (grouping; parent-of its features)"
-                status-attr "refinement|pending|claimed|in_review|<outcome>"
+                lane-attr "refinement|pending|claimed|in_review (active cards only)"
+                outcome-attr "explicit finish outcome on closed cards"
                 priority-attr "p1|p2|p3|p4 (default p3); orders lanes and `kanban next`"
-                note-attr "true on note strands (closed notes-relation children of a card or task)"
                 task-attr "true on task strands (parent-of children of a feature card; status derived)"
-                run-attr "optional tracker run-id; `kanban card` joins the bound tracker's status and ready steps"
-                devflow-attr "deprecated pre-tracker run-id alias, read as a fallback for kanban/run"
+                run-id-attr "optional tracker run-id; `kanban card` joins the bound tracker's status and ready steps"
                 :kanban/source "optional path or URL for design context"
                 :owner "claimant, required at claim"
                 :branch "work branch, required at claim"
                 :worktree "optional worktree path"}
    :tracker (if-let [bound @(tracker-binding)]
               (str "Bound tracker: " (:name bound)
-                   ". `kanban card` joins the run's status and ready steps for cards stamped kanban/run.")
-              (str "No tracker bound. Cards stamped kanban/run project honestly as unbound (name nil) "
+                   ". `kanban card` joins the run's status and ready steps for cards stamped kanban/run-id.")
+              (str "No tracker bound. Cards stamped kanban/run-id project honestly as unbound (name nil) "
                    "until trusted config binds one with set-tracker!."))
    :convention (fmt/reflow "
                  |The card is the work root: claim stamps owner/branch, and execution strands hang
@@ -1083,7 +1065,7 @@
                       |surfaces as that task's `latest-note`. Card notes stay lean handover
                       |summaries; bulk content (review findings, pasted output) belongs on a task
                       |note via `strand --stdin kanban note <task-id> :stdin --by <name> --kind
-                      |review-dump` — views clip note bodies past a cap. A cold agent resumes from
+                      |review-dump` — views clip note text past a cap. A cold agent resumes from
                       |the doing-task and its `latest-note` via `kanban board` -> `kanban card
                       |<id>`.")
    :discovery {:help "strand help kanban"
@@ -1109,7 +1091,7 @@
                                 :title "Feature title"
                                 :body "optional body"
                                 :priority "optional p1|p2|p3|p4 (default p3)"
-                                :deps ["sibling-key-or-existing-strand-id"]}]}}]})
+                                :depends-on ["sibling-key-or-existing-strand-id"]}]}}]})
 
 (defn prime
   "Return the full agent-priming payload for working the kanban board.
@@ -1133,7 +1115,7 @@
                |Execution strands hang beneath a card via `parent-of` — kanban complements the
                |engines that produce them, it never tracks their runs directly.
                |
-               |Half-formed ideas go to the refinement lane (`kanban add \"...\" --status
+               |Half-formed ideas go to the refinement lane (`kanban add \"...\" --lane
                |refinement`); they stay inert until a human `kanban promote`s them.")
          :pick-up-next-card
          (fmt/fill "
@@ -1164,14 +1146,14 @@
                |Bulk content never goes on the card: review findings, pasted command output,
                |and long dumps belong on a task note via `strand --stdin kanban note <task-id>
                |:stdin --by <name> --kind review-dump`. Other view hints are
-               |activity|decision|summary. Views clip note bodies past a cap; `strand show
+               |activity|decision|summary. Views clip note text past a cap; `strand show
                |<note-id>` returns the full text.
                |
                |Tasks are the resume point. A cold agent resumes from the doing-task and its
                |`latest-note`: `kanban board` shows claimed and in-review cards with their
                |doing-task; `kanban card <id>` returns the card, its tasks (each carrying its
                |`latest-note`), notes, active work, and ready frontier. Even with no notes
-               |yet, the doing-task's body, deps, and lane name the next move.")
+               |yet, the doing-task's body, dependencies, and lane name the next move.")
          :staying-aware
          (fmt/fill "
                |`kanban board` returns `needs-review`: the human-review frontier aggregated
@@ -1203,7 +1185,7 @@
     "add" {:doc "Create a feature or epic card."
            :flags {:body {:doc "Longer card context."}
                    :source {:doc "Path or URL for design context."}
-                   :status {:doc "Initial lane: pending or refinement."}
+                   :lane {:doc "Initial lane: pending or refinement."}
                    :type {:doc "Card type: feature or epic."}
                    :epic {:doc "Existing epic card id to parent this feature under."}
                    :priority {:doc "Priority p1|p2|p3|p4; defaults to p3."}}
@@ -1224,11 +1206,10 @@
              :flags {:owner {:doc "Claimant name (required by handler)."}
                      :branch {:doc "Work branch (required by handler)."}
                      :worktree {:doc "Optional worktree path."}
-                     :run {:doc "Optional tracker run-id joined by `kanban card` (stamps kanban/run)."}
-                     :devflow {:doc "Deprecated alias for --run (stamps kanban/run)."}}
+                     :run-id {:doc "Optional tracker run-id joined by `kanban card` (stamps kanban/run-id)."}}
              :positionals [{:name :id :required? true :doc "Kanban card id."}]}
     "note" {:doc "Append a note to a card or task; note the doing-task as you go."
-            :flags {:by {:doc "Note author."}
+            :flags {:by {:doc "Note attribution."}
                     :kind {:doc "Open note/kind view hint: activity, decision, review-dump, summary."}}
             :positionals [{:name :id :required? true :doc "Kanban card or task id."}
                           {:name :text
@@ -1248,8 +1229,8 @@
               :positionals [{:name :id :required? true :doc "Kanban card id."}]}
     "rework" {:doc "Move an in_review card back to claimed for rework."
               :positionals [{:name :id :required? true :doc "Kanban card id."}]}
-    "finish" {:doc "Close a claimed or in_review kanban card with an explicit outcome status."
-              :flags {:outcome {:doc "Closed outcome status; defaults to done."}}
+    "finish" {:doc "Close a claimed or in_review kanban card with an explicit outcome."
+              :flags {:outcome {:doc "Closed outcome; defaults to done."}}
               :positionals [{:name :id :required? true :doc "Kanban card id."}]}}})
 
 (defn- legacy-flags
@@ -1278,7 +1259,7 @@
       "promote" (promote! (:id args))
       "claim" (claim! (:id args) flags)
       "task" (task-op args flags)
-      "review" (request-review! (:id args))
+      "review" (review! (:id args))
       "rework" (rework! (:id args))
       "note" (note! (:id args) (str/join " " (:text args)) flags)
       "finish" (finish! (:id args) flags))))
@@ -1368,9 +1349,9 @@
      :vocab (vocab/declare! rt {:kind :attr-namespace
                                 :name "kanban"
                                 :owner :skein/spools-kanban
-                                :keys ["kanban/card" "kanban/status" "kanban/type"
+                                :keys ["kanban/card" "kanban/lane" "kanban/outcome" "kanban/type"
                                        "kanban/priority" "kanban/source" "kanban/task"
-                                       "kanban/run" "kanban/devflow" "kanban/from"]
+                                       "kanban/run-id" "kanban/from"]
                                 :doc "Kanban card state attributes written by ct.spools.kanban/add!."})
      :ops [(weaver/register-op! rt 'kanban
                                 {:doc "Manage the user-facing kanban work board. Run `strand kanban about` for the convention manual."
@@ -1389,17 +1370,17 @@
                                           'ct.spools.kanban/kanban-batch
                                           ::kanban-batch-input)
      :queries [(graph/register-query! rt 'kanban-cards [:= [:attr "kanban/card"] "true"])
-               (graph/register-query! rt 'kanban-unstarted
+               (graph/register-query! rt 'kanban-pending
                                       [:and
                                        [:= :state "active"]
                                        [:= [:attr "kanban/card"] "true"]
-                                       [:= [:attr "kanban/status"] "pending"]])]}))
+                                       [:= [:attr "kanban/lane"] "pending"]])]}))
 
 (defn install-peering!
   "Register the opt-in `kanban.send.v1` board-peering receive op.
 
   A separate opt-in entry point wired into trusted config after
-  `(skein.spools.guild/install!)` and `(install!)`. Delegates to
+  `(skein.spools.guild/install! runtime)` and `(install!)`. Delegates to
   `ct.spools.kanban.peering/install-peering!` via `requiring-resolve` so the base
   kanban spool never load-depends on the guild spool; peering (and its guild
   dependency) load only when a repo opts in."

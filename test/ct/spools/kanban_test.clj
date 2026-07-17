@@ -32,9 +32,9 @@
   [run-id]
   (if (= "widgets-run" run-id)
     {:status "spec"
-     :next-steps [{:id "s1" :title "Draft spec" :kind "step" :stage "spec"
-                   :checkpoint false :extra "trimmed by kanban"}]}
-    {:status nil :next-steps []}))
+     :ready [{:id "s1" :title "Draft spec" :role "step" :stage "spec"
+              :checkpoint false :extra "trimmed by kanban"}]}
+    {:status nil :ready []}))
 
 (defn- with-kanban
   "Run f with a fresh weaver runtime that has the kanban spool installed.
@@ -124,7 +124,7 @@
               stored (weaver/show rt id)]
           (is (= "Build active work convention" (:title stored)))
           (is (= "true" (get-in stored [:attributes :kanban/card])))
-          (is (= "pending" (get-in stored [:attributes :kanban/status])))
+          (is (= "pending" (get-in stored [:attributes :kanban/lane])))
           (is (= "feature" (get-in stored [:attributes :kanban/type])))
           (is (= "devflow/rfcs/2026-07-02-feature-tracking-registry.md"
                  (get-in stored [:attributes :kanban/source])))
@@ -138,25 +138,26 @@
           (testing "claim stamps status and work-root attributes"
             (let [claimed (op! rt "claim" id "--owner" "agent" "--branch" "kanban-spool"
                                "--worktree" "/tmp/wt")]
-              (is (= "claimed" (get-in claimed [:card :attributes :kanban/status])))
+              (is (= "claimed" (get-in claimed [:card :attributes :kanban/lane])))
               (is (= "agent" (get-in claimed [:card :attributes :owner])))
               (is (= "kanban-spool" (get-in claimed [:card :attributes :branch])))
               ;; regression: the claimed status must survive the round trip to
               ;; storage (string/keyword attr-key collisions once dropped it)
-              (is (= "claimed" (get-in (weaver/show rt id) [:attributes :kanban/status])))
+              (is (= "claimed" (get-in (weaver/show rt id) [:attributes :kanban/lane])))
               (is (nil? (:next (op! rt "next"))))
               (is (thrown-with-msg? clojure.lang.ExceptionInfo #"must be pending"
                                     (op! rt "claim" id "--owner" "other" "--branch" "b")))))
           (testing "review, rework, and finish enforce the review lane"
             (let [reviewing (op! rt "review" id)]
-              (is (= "in_review" (get-in reviewing [:card :attributes :kanban/status])))
+              (is (= "in_review" (get-in reviewing [:card :attributes :kanban/lane])))
               (is (thrown-with-msg? clojure.lang.ExceptionInfo #"must be claimed"
                                     (op! rt "review" id)))
-              (is (= "claimed" (get-in (op! rt "rework" id) [:card :attributes :kanban/status])))
-              (is (= "in_review" (get-in (op! rt "review" id) [:card :attributes :kanban/status]))))
+              (is (= "claimed" (get-in (op! rt "rework" id) [:card :attributes :kanban/lane])))
+              (is (= "in_review" (get-in (op! rt "review" id) [:card :attributes :kanban/lane]))))
             (let [finished (op! rt "finish" id)]
               (is (= "closed" (get-in finished [:card :state])))
-              (is (= "done" (get-in finished [:card :attributes :kanban/status]))))))))))
+              (is (nil? (get-in finished [:card :attributes :kanban/lane])))
+              (is (= "done" (get-in finished [:card :attributes :kanban/outcome]))))))))))
 
 (deftest kanban-declared-subcommands-help-and-parser-errors
   (with-kanban
@@ -230,22 +231,22 @@
 (deftest kanban-refinement-lane-and-promote
   (with-kanban
     (fn [rt]
-      (let [idea (op! rt "add" "Vague idea" "--status" "refinement")
+      (let [idea (op! rt "add" "Vague idea" "--lane" "refinement")
             idea-id (get-in idea [:card :id])]
-        (is (= "refinement" (get-in idea [:card :attributes :kanban/status])))
+        (is (= "refinement" (get-in idea [:card :attributes :kanban/lane])))
         (testing "refinement cards are not actionable"
           (is (nil? (:next (op! rt "next"))))
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"must be pending"
                                 (op! rt "claim" idea-id "--owner" "a" "--branch" "b"))))
         (testing "promote moves the card into the pending lane"
           (is (= "pending" (get-in (op! rt "promote" idea-id)
-                                   [:card :attributes :kanban/status])))
+                                   [:card :attributes :kanban/lane])))
           (is (= idea-id (get-in (op! rt "next") [:next :id])))
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"must be refinement"
                                 (op! rt "promote" idea-id))))
         (testing "add rejects unknown statuses and types"
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"pending or refinement"
-                                (op! rt "add" "Bad lane" "--status" "someday")))
+                                (op! rt "add" "Bad lane" "--lane" "someday")))
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"feature or epic"
                                 (op! rt "add" "Bad type" "--type" "story"))))))))
 
@@ -268,7 +269,7 @@
         (testing "cards that predate priorities read as p3"
           (let [legacy (weaver/add rt {:title "Legacy card"
                                        :attributes {:kanban/card "true"
-                                                    :kanban/status "pending"
+                                                    :kanban/lane "pending"
                                                     :kanban/type "feature"}})
                 on-board (some #(when (= (:id legacy) (:id %)) %)
                                (:pending (op! rt "board")))]
@@ -326,7 +327,7 @@
               (is (= card-id (get-in view [:card :id])))
               (is (= 2 (count (:notes view))))
               (is (= "Done: impl. Next: review. Validation: tests green."
-                     (:body (first (:notes view)))))
+                     (:note (first (:notes view)))))
               (is (= #{(:id task) (:id review)}
                      (set (map :id (:active-work view)))))
               ;; review depends on the task, so only the task is ready
@@ -353,21 +354,21 @@
                            "--by" "agent-a" "--kind" "activity")]
             (is (= task-id (:task noted)))
             (is (= feature-id (:card noted)))
-            (is (= "agent-a" (get-in noted [:note :attributes :author])))
-            (is (= "activity" (get-in noted [:note :attributes :note/kind])))
-            (is (= "true" (get-in noted [:note :attributes :kanban/note])))))
+            (is (= "agent-a" (get-in noted [:strand :attributes :note/by])))
+            (is (= "activity" (get-in noted [:strand :attributes :note/kind])))
+            (is (nil? (get-in noted [:strand :attributes :kanban/note])))))
         (testing "the newest task note surfaces as :latest-note in every task projection"
           (op! rt "note" task-id "Chose sqlite over flat files" "--kind" "decision")
           (let [listed (first (:tasks (op! rt "task" "list" feature-id)))
                 viewed (first (:tasks (op! rt "card" feature-id)))]
-            (is (= "Chose sqlite over flat files" (get-in listed [:latest-note :body])))
+            (is (= "Chose sqlite over flat files" (get-in listed [:latest-note :note])))
             (is (= "decision" (get-in listed [:latest-note :kind])))
-            (is (= (dissoc (:latest-note listed) :created_at)
-                   (dissoc (:latest-note viewed) :created_at)))))
+            (is (= (dissoc (:latest-note listed) :at)
+                   (dissoc (:latest-note viewed) :at)))))
         (testing "task notes stay out of the card's own note trail"
           (op! rt "note" feature-id "Handover: task tier carries the detail")
-          (let [bodies (mapv :body (:notes (op! rt "card" feature-id)))]
-            (is (= ["Handover: task tier carries the detail"] bodies))))
+          (let [notes (mapv :note (:notes (op! rt "card" feature-id)))]
+            (is (= ["Handover: task tier carries the detail"] notes))))
         (testing "a card note keeps the card-only response shape"
           (let [noted (op! rt "note" feature-id "Lean card note")]
             (is (= feature-id (:card noted)))
@@ -393,10 +394,10 @@
         (testing "card notes past the cap are clipped and marked truncated"
           (let [[long-note short-note] (:notes (op! rt "card" feature-id))]
             (is (true? (:truncated long-note)))
-            (is (< (count (:body long-note)) (count dump)))
-            (is (str/ends-with? (:body long-note) "…"))
+            (is (< (count (:note long-note)) (count dump)))
+            (is (str/ends-with? (:note long-note) "…"))
             (is (= "review-dump" (:kind long-note)))
-            (is (= "Short and intact" (:body short-note)))
+            (is (= "Short and intact" (:note short-note)))
             (is (not (contains? short-note :truncated)))))
         (testing "the full text stays on the note strand"
           (let [note-id (:id (first (:notes (op! rt "card" feature-id))))]
@@ -404,12 +405,12 @@
         (testing "task latest-note bodies clip the same way"
           (let [latest (:latest-note (first (:tasks (op! rt "card" feature-id))))]
             (is (true? (:truncated latest)))
-            (is (str/ends-with? (:body latest) "…"))))))))
+            (is (str/ends-with? (:note latest) "…"))))))))
 
 (deftest kanban-board-groups-lanes
   (with-kanban
     (fn [rt]
-      (let [idea-id (get-in (op! rt "add" "Idea" "--status" "refinement") [:card :id])
+      (let [idea-id (get-in (op! rt "add" "Idea" "--lane" "refinement") [:card :id])
             queued-id (get-in (op! rt "add" "Queued") [:card :id])
             working-id (get-in (op! rt "add" "Working") [:card :id])
             review-id (get-in (op! rt "add" "Reviewing") [:card :id])
@@ -426,8 +427,8 @@
           (is (= [review-id] (mapv :id (:in_review board))))
           (is (= "feature-x" (:branch (first (:claimed board)))))
           (is (= 1 (get-in board [:closed :count])))
-          (is (not (contains? board :unknown-status))))
-        (is (= "abandoned" (get-in (weaver/show rt done-id) [:attributes :kanban/status])))))))
+          (is (not (contains? board :unknown-lane))))
+        (is (= "abandoned" (get-in (weaver/show rt done-id) [:attributes :kanban/outcome])))))))
 
 (deftest kanban-board-needs-review-frontier
   (with-kanban
@@ -436,7 +437,8 @@
         (op! rt "claim" card-id "--owner" "agent" "--branch" "review-branch")
         (testing "needs-review is always present and empty before any review work"
           (is (= [] (:needs-review (op! rt "board")))))
-        (let [ready-review (weaver/add rt {:title "Review ready" :attributes {:kind "review"}})
+        (let [ready-review (weaver/add rt {:title "Review ready"
+                                           :attributes {:workflow/checkpoint-kind "human"}})
               impl (weaver/add rt {:title "Implement" :attributes {:kind "task"}})
               blocked-review (weaver/add rt {:title "Review blocked" :attributes {:kind "review"}})]
           (weaver/update rt card-id {:edges [{:type "parent-of" :to (:id ready-review)}
@@ -478,7 +480,7 @@
   (with-kanban
     (fn [rt]
       (let [long-title (apply str "Very long title " (repeat 40 "padding "))
-            _idea (op! rt "add" long-title "--status" "refinement")
+            _idea (op! rt "add" long-title "--lane" "refinement")
             working-id (get-in (op! rt "add" "Working card") [:card :id])]
         (op! rt "claim" working-id "--owner" "agent-a" "--branch" "feature-x")
         (let [rendered ((requiring-resolve 'ct.spools.kanban/board-str) (op! rt "board"))
@@ -551,14 +553,14 @@
         (weaver/update rt done-id {:state "closed"})
         (testing "the four statuses derive purely from graph + core attrs"
           (let [status (status-of)]
-            (is (= "ready" (status ready-id)) "active, deps met, no owner")
-            (is (= "doing" (status doing-id)) "active, deps met, owner present")
-            (is (= "done" (status done-id)) "closed strand")
+            (is (= "ready" (status ready-id)) "active, dependencies met, no owner")
+            (is (= "doing" (status doing-id)) "active, dependencies met, owner present")
+            (is (= "closed" (status done-id)) "closed strand")
             (is (= "blocked" (status blocked-id)) "active with an unmet depends-on target")))
         (testing "closing the dependency unblocks its dependent"
           (weaver/update rt ready-id {:state "closed"})
           (let [status (status-of)]
-            (is (= "done" (status ready-id)) "the closed dependency reads as done")
+            (is (= "closed" (status ready-id)) "the closed dependency reads as closed")
             (is (= "ready" (status blocked-id)) "dependency closed, no owner -> ready")))))))
 
 (deftest kanban-card-view-projects-tasks-lane
@@ -604,52 +606,31 @@
               (is (str/includes? rendered "doing: Wire the thing")))))))))
 
 (deftest kanban-card-view-joins-the-bound-tracker
-  ;; The spool's one tracker seam: a card stamped with kanban/run (claim --run)
+  ;; The spool's one tracker seam: a card stamped with kanban/run-id (claim --run-id)
   ;; projects the bound tracker's status and ready steps in card view.
   (with-kanban
     (fn [rt]
       (let [card-id (get-in (op! rt "add" "Tracked feature") [:card :id])
             plain-id (get-in (op! rt "add" "Untracked feature") [:card :id])]
-        (testing "claim --run stamps the run-id on the card as kanban/run"
+        (testing "claim --run-id stamps the run-id on the card as kanban/run-id"
           (let [claimed (op! rt "claim" card-id "--owner" "agent" "--branch" "widgets"
-                             "--run" "widgets-run")]
-            (is (= "widgets-run" (get-in claimed [:card :attributes :kanban/run])))))
+                             "--run-id" "widgets-run")]
+            (is (= "widgets-run" (get-in claimed [:card :attributes :kanban/run-id])))))
         (kanban/set-tracker! {:name "stub" :project stub-projection})
         (testing "a bound tracker joins the run's status and trimmed ready steps"
-          (let [{:keys [name run status next-steps]} (:tracker (op! rt "card" card-id))]
+          (let [{:keys [name run-id status ready]} (:tracker (op! rt "card" card-id))]
             (is (= "stub" name))
-            (is (= "widgets-run" run))
+            (is (= "widgets-run" run-id))
             (is (= "spec" status))
             ;; kanban trims each step to its own closed key set — the tracker's
             ;; :extra key never leaks into the kanban-owned card-view shape
-            (is (= [{:id "s1" :title "Draft spec" :kind "step" :stage "spec" :checkpoint false}]
-                   next-steps))))
+            (is (= [{:id "s1" :title "Draft spec" :role "step" :stage "spec" :checkpoint false}]
+                   ready))))
         (testing "a tracker reporting no active run projects an honest nil status"
           (let [idle-id (get-in (op! rt "add" "Idle-run feature") [:card :id])]
-            (op! rt "claim" idle-id "--owner" "agent" "--branch" "idle" "--run" "idle-run")
-            (is (= {:name "stub" :run "idle-run" :status nil :next-steps []}
+            (op! rt "claim" idle-id "--owner" "agent" "--branch" "idle" "--run-id" "idle-run")
+            (is (= {:name "stub" :run-id "idle-run" :status nil :ready []}
                    (:tracker (op! rt "card" idle-id))))))
-        (testing "the deprecated --devflow flag stamps kanban/run, not kanban/devflow"
-          (let [aliased (get-in (op! rt "add" "Aliased feature") [:card :id])
-                claimed (op! rt "claim" aliased "--owner" "a" "--branch" "b" "--devflow" "aliased-run")]
-            (is (= "aliased-run" (get-in claimed [:card :attributes :kanban/run])))
-            (is (nil? (get-in claimed [:card :attributes :kanban/devflow])))
-            (is (= "aliased-run" (:run (:tracker (op! rt "card" aliased)))))))
-        (testing "the deprecated kanban/devflow attr still reads as a run fallback"
-          (let [legacy (weaver/add rt {:title "Legacy devflow card"
-                                       :attributes {:kanban/card "true"
-                                                    :kanban/status "claimed"
-                                                    :kanban/type "feature"
-                                                    :kanban/devflow "legacy-run"}})]
-            (is (= "legacy-run" (:run (:tracker (op! rt "card" (:id legacy))))))))
-        (testing "kanban/run wins when both run attrs are stamped"
-          (let [both (weaver/add rt {:title "Both stamped card"
-                                     :attributes {:kanban/card "true"
-                                                  :kanban/status "claimed"
-                                                  :kanban/type "feature"
-                                                  :kanban/run "canonical-run"
-                                                  :kanban/devflow "legacy-run"}})]
-            (is (= "canonical-run" (:run (:tracker (op! rt "card" (:id both))))))))
         (testing "an unstamped card carries no :tracker key"
           (is (not (contains? (op! rt "card" plain-id) :tracker))))))))
 
@@ -659,8 +640,8 @@
   (with-kanban
     (fn [rt]
       (let [card-id (get-in (op! rt "add" "Unbound-world feature") [:card :id])]
-        (op! rt "claim" card-id "--owner" "agent" "--branch" "widgets" "--run" "widgets-run")
-        (is (= {:name nil :run "widgets-run" :status nil :next-steps []}
+        (op! rt "claim" card-id "--owner" "agent" "--branch" "widgets" "--run-id" "widgets-run")
+        (is (= {:name nil :run-id "widgets-run" :status nil :ready []}
                (:tracker (op! rt "card" card-id))))))))
 
 (deftest kanban-set-tracker-resolves-a-symbol-valued-project
@@ -669,12 +650,12 @@
   (with-kanban
     (fn [rt]
       (let [card-id (get-in (op! rt "add" "Symbol-tracked feature") [:card :id])]
-        (op! rt "claim" card-id "--owner" "agent" "--branch" "widgets" "--run" "widgets-run")
+        (op! rt "claim" card-id "--owner" "agent" "--branch" "widgets" "--run-id" "widgets-run")
         (kanban/set-tracker! {:name "stub" :project 'ct.spools.kanban-test/stub-projection})
-        (let [{:keys [name status next-steps]} (:tracker (op! rt "card" card-id))]
+        (let [{:keys [name status ready]} (:tracker (op! rt "card" card-id))]
           (is (= "stub" name))
           (is (= "spec" status))
-          (is (= ["s1"] (mapv :id next-steps))))))))
+          (is (= ["s1"] (mapv :id ready))))))))
 
 (deftest kanban-set-tracker-rejects-a-malformed-binding
   (with-kanban
@@ -695,20 +676,20 @@
     (fn [rt]
       (let [bad-id (get-in (op! rt "add" "Bad-projection feature") [:card :id])
             boom-id (get-in (op! rt "add" "Throwing-tracker feature") [:card :id])]
-        (op! rt "claim" bad-id "--owner" "a" "--branch" "b" "--run" "widgets-run")
-        (op! rt "claim" boom-id "--owner" "a" "--branch" "c" "--run" "widgets-run")
+        (op! rt "claim" bad-id "--owner" "a" "--branch" "b" "--run-id" "widgets-run")
+        (op! rt "claim" boom-id "--owner" "a" "--branch" "c" "--run-id" "widgets-run")
         (testing "a non-map projection result fails loudly"
           (kanban/set-tracker! {:name "bad" :project (fn [_] "not-a-map")})
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"projection does not match its owning spec"
                                 (op! rt "card" bad-id))))
         (testing "missing or malformed projection fields fail loudly"
           (doseq [projection [{:status nil}
-                              {:status 42 :next-steps []}
-                              {:status nil :next-steps nil}
-                              {:status nil :next-steps ["not-a-map"]}
-                              {:status nil :next-steps [{}]}
-                              {:status nil :next-steps [{:id "s1" :title "" :kind "step"}]}
-                              {:status nil :next-steps [] :surprise true}]]
+                              {:status 42 :ready []}
+                              {:status nil :ready nil}
+                              {:status nil :ready ["not-a-map"]}
+                              {:status nil :ready [{}]}
+                              {:status nil :ready [{:id "s1" :title "" :role "step"}]}
+                              {:status nil :ready [] :surprise true}]]
             (kanban/set-tracker! {:name "malformed" :project (fn [_] projection)})
             (is (thrown-with-msg? clojure.lang.ExceptionInfo
                                   #"projection does not match its owning spec"
@@ -723,9 +704,9 @@
     (fn [rt]
       (let [card (weaver/add rt {:title "Malformed run card"
                                  :attributes {:kanban/card "true"
-                                              :kanban/status "claimed"
+                                              :kanban/lane "claimed"
                                               :kanban/type "feature"
-                                              :kanban/run ""}})]
+                                              :kanban/run-id ""}})]
         (is (thrown-with-msg? clojure.lang.ExceptionInfo
                               #"Tracker view does not match its owning spec"
                               (op! rt "card" (:id card))))))))
@@ -756,7 +737,7 @@
                                               :priority "p2"}
                                              {:key "docs"
                                               :title "Write docs"
-                                              :deps ["design" (:id existing)]}]})
+                                              :depends-on ["design" (:id existing)]}]})
             design-id (get-in result [:refs "design"])
             docs-id (get-in result [:refs "docs"])
             design (weaver/show rt design-id)
@@ -767,7 +748,7 @@
         (is (= "Design body" (get-in design [:attributes :body])))
         (is (= "p2" (get-in design [:attributes :kanban/priority])))
         (is (= "true" (get-in docs [:attributes :kanban/card])))
-        (is (= "pending" (get-in docs [:attributes :kanban/status])))
+        (is (= "pending" (get-in docs [:attributes :kanban/lane])))
         (is (= "p3" (get-in docs [:attributes :kanban/priority])))
         (is (contains? edge-set [docs-id design-id "depends-on"]))
         (is (contains? edge-set [docs-id (:id existing) "depends-on"]))))))
@@ -787,7 +768,7 @@
                                                       {:key "x" :title "Again"}]})))
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"target strand not found"
                             (patterns/weave! rt :kanban-batch
-                                             {:items [{:key "x" :title "X" :deps ["missing-strand"]}]}))))))
+                                             {:items [{:key "x" :title "X" :depends-on ["missing-strand"]}]}))))))
 
 (deftest install-registers-kanban-export-op
   (with-kanban
@@ -836,15 +817,9 @@
       (let [id (get-in (op! rt "add" "Blank run guard") [:card :id])]
         ;; regression: a blank run-id once stamped an empty attr that later
         ;; rendered as the same honest unbound shape as a real unstarted run
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"run must be a non-blank string"
-                              (op! rt "claim" id "--owner" "agent" "--branch" "b" "--run" "")))
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"devflow must be a non-blank string"
-                              (op! rt "claim" id "--owner" "agent" "--branch" "b" "--devflow" "")))
-        (testing "passing both --run and --devflow fails loudly"
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"--run or --devflow, not both"
-                                (op! rt "claim" id "--owner" "agent" "--branch" "b"
-                                     "--run" "r" "--devflow" "d"))))
-        (is (= "pending" (get-in (weaver/show rt id) [:attributes :kanban/status]))
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"run-id must be a non-blank string"
+                              (op! rt "claim" id "--owner" "agent" "--branch" "b" "--run-id" "")))
+        (is (= "pending" (get-in (weaver/show rt id) [:attributes :kanban/lane]))
             "no failed claim moved the card")))))
 
 (defn -main

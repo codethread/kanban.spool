@@ -2,7 +2,7 @@
   "Opt-in board peering: the RECEIVE guild op plus the SEND-side local ops.
 
   A trusted-config module wires `ct.spools.kanban/install-peering!` in after the
-  guild spool is installed (`skein.spools.guild/install!`) and the kanban board
+  guild spool is installed (`skein.spools.guild/install! runtime`) and the kanban board
   op is registered (`ct.spools.kanban/install!`). That entry point registers
   three ops:
 
@@ -19,7 +19,7 @@
     board over `kanban.send.v1`.
 
   The two peering seams onto sibling weavers — enumerate/probe and invoke — go
-  through `skein.api.peers.alpha` behind `*list-peers*`, `*describe-peer*`, and
+  through `skein.api.peers.alpha` behind `*list-peers*`, `*list-peer-guild*`, and
   `*send-card*` so classification and payload building are testable without a
   live socket peer."
   (:require [clojure.data.json :as json]
@@ -51,15 +51,15 @@
 (s/def ::body ::non-blank-string)
 (s/def ::source ::non-blank-string)
 (s/def ::priority #{"p1" "p2" "p3" "p4"})
-(s/def ::status #{"pending" "refinement"})
+(s/def ::lane #{"pending" "refinement"})
 
-(def ^:private card-keys #{:title :body :source :priority :status})
+(def ^:private card-keys #{:title :body :source :priority :lane})
 
 (s/def ::card-map
   (s/and map?
          #(known-keys? card-keys %)
          (s/keys :req-un [::title]
-                 :opt-un [::body ::source ::priority ::status])))
+                 :opt-un [::body ::source ::priority ::lane])))
 
 (s/def ::card ::card-map)
 (s/def ::epic ::card-map)
@@ -163,7 +163,7 @@
   one defaulting path."
   [card]
   (cond-> {}
-    (:status card) (assoc "--status" (:status card))
+    (:lane card) (assoc "--lane" (:lane card))
     (:priority card) (assoc "--priority" (:priority card))
     (:body card) (assoc "--body" (:body card))
     (:source card) (assoc "--source" (:source card))))
@@ -214,10 +214,10 @@
   []
   (peers/peers))
 
-(defn- describe-peer*
-  "Invoke `guild.describe` on a peer (row or friendly name) via `peers/call!`."
+(defn- list-peer-guild*
+  "Invoke `guild list` on a peer (row or friendly name) via `peers/call!`."
   [peerish]
-  (peers/call! peerish "guild.describe"))
+  (peers/call! peerish "guild" {:argv ["list"]}))
 
 (defn- send-card*
   "Invoke `kanban.send.v1` on a peer with the payload as one JSON `:argv` string."
@@ -225,48 +225,48 @@
   (peers/call! peerish "kanban.send.v1" {:argv [json-arg]}))
 
 (def ^:dynamic *list-peers* list-peers*)
-(def ^:dynamic *describe-peer* describe-peer*)
+(def ^:dynamic *list-peer-guild* list-peer-guild*)
 (def ^:dynamic *send-card* send-card*)
 
-;; guild.describe rides back through peers/call! JSON-decoded, so its envelope
+;; guild list rides back through peers/call! JSON-decoded, so its envelope
 ;; and op entries are string-keyed. The shape is a contract: a well-formed reply
 ;; carries an "active" sequence of `{"name" <string>}` op entries.
 
-(s/def ::describe-active-entry
+(s/def ::guild-active-entry
   (s/and map? #(non-blank-string? (get % "name"))))
 
-(s/def ::describe-active
-  (s/coll-of ::describe-active-entry :kind sequential?))
+(s/def ::guild-active
+  (s/coll-of ::guild-active-entry :kind sequential?))
 
-(s/def ::describe-envelope
+(s/def ::guild-list-envelope
   (s/and map?
          #(contains? % "active")
-         #(s/valid? ::describe-active (get % "active"))))
+         #(s/valid? ::guild-active (get % "active"))))
 
-(defn- validate-describe!
-  "Return described when it is a well-formed guild.describe envelope, failing loudly otherwise.
+(defn- validate-guild-list!
+  "Return listed when it is a well-formed `guild list` envelope, failing loudly otherwise.
 
   A malformed envelope — missing or non-sequential `active`, or entries lacking a
   string `name` — is protocol corruption, not an ordinary non-advertising peer.
   TEN-003 requires it to surface rather than collapse silently into a false
   capability classification."
-  [peerish described]
-  (when-not (s/valid? ::describe-envelope described)
-    (fail! "guild.describe returned a malformed envelope"
+  [peerish listed]
+  (when-not (s/valid? ::guild-list-envelope listed)
+    (fail! "guild list returned a malformed envelope"
            {:peer peerish
-            :received described
+            :received listed
             :expected "{\"active\" [{\"name\" <non-blank string>} ...]}"
-            :explain (s/explain-str ::describe-envelope described)}))
-  described)
+            :explain (s/explain-str ::guild-list-envelope listed)}))
+  listed)
 
 (defn- advertises-send?
-  "Return true when a validated `guild.describe` envelope lists `kanban.send.v1` as active.
+  "Return true when a validated `guild list` envelope lists `kanban.send.v1` as active.
 
-  Callers must pass a `validate-describe!`-checked envelope, so every entry is a
+  Callers must pass a `validate-guild-list!`-checked envelope, so every entry is a
   string-keyed op map: a false result means a well-formed peer that simply does
   not advertise the receive op, never a malformed reply."
-  [described]
-  (boolean (some #(= "kanban.send.v1" (get % "name")) (get described "active"))))
+  [listed]
+  (boolean (some #(= "kanban.send.v1" (get % "name")) (get listed "active"))))
 
 (defn- domain-error?
   "Return true when ex is a `peers/call!` domain-error (the peer rejected the op)."
@@ -285,12 +285,12 @@
 (defn- probe-kanban-send?
   "Return true when a running peer advertises `kanban.send.v1`.
 
-  A running peer that rejects `guild.describe` as an unknown op (a domain error)
+  A running peer that rejects `guild list` as an unknown op (a domain error)
   is an expected non-peering sibling -> false. Any other transport or protocol
   failure propagates loudly (TEN-003: no swallowed errors)."
   [peer-row]
   (try
-    (advertises-send? (validate-describe! peer-row (*describe-peer* peer-row)))
+    (advertises-send? (validate-guild-list! peer-row (*list-peer-guild* peer-row)))
     (catch clojure.lang.ExceptionInfo ex
       (if (domain-error? ex)
         false
@@ -301,7 +301,7 @@
 
   Every metadata row from `peers/peers` is listed, including stale ones
   (`:running? false`), which are never probed. Each running non-self peer is
-  probed via `guild.describe`; `:kanban-send? true` when `kanban.send.v1` is
+  probed via `guild list`; `:kanban-send? true` when `kanban.send.v1` is
   active. The local weaver is marked `:self? true` when it appears in the roster
   and answers from the local op registry rather than calling its own socket. The
   return conforms to `::peers-result` (rows to `::peer-row`)."
@@ -329,20 +329,19 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private card-attr :kanban/card)
-(def ^:private status-attr :kanban/status)
+(def ^:private lane-attr :kanban/lane)
 (def ^:private type-attr :kanban/type)
 (def ^:private priority-attr :kanban/priority)
 (def ^:private source-attr :kanban/source)
 
-(def ^:private sendable-statuses
+(def ^:private sendable-lanes
   "Lanes whose cards may travel: only queued work. In-flight (claimed,
   in_review) and finished (closed) work is world-local and never peers."
   #{"pending" "refinement"})
 
-(def ^:private active-child-statuses
+(def ^:private active-child-lanes
   "Every board lane an epic's direct, still-open feature child may occupy. Closed
-  children are detected by strand state (their `kanban/status` holds the outcome,
-  not `closed`); an open child outside this set is a corrupt or nil lane, not a
+  children are detected by strand state; an open child outside this set is a corrupt or nil lane, not a
   silently-droppable one."
   #{"pending" "refinement" "claimed" "in_review"})
 
@@ -351,10 +350,10 @@
   [strand]
   (or (attr-get strand type-attr) "feature"))
 
-(defn- card-status
-  "Return a card's board lane status."
+(defn- card-lane
+  "Return a card's board lane."
   [strand]
-  (attr-get strand status-attr))
+  (attr-get strand lane-attr))
 
 (defn- card-strand
   "Return id's kanban card strand, failing loudly if absent or not a card."
@@ -366,19 +365,19 @@
     strand))
 
 (defn- require-sendable!
-  "Return card when it may travel, failing loudly with its status otherwise.
+  "Return card when it may travel, failing loudly with its lane otherwise.
 
   Only active pending/refinement cards peer; the failure names the blocking lane
   so a caller sees why in-flight or finished work stayed home."
   [card]
   (when-not (= "active" (:state card))
     (fail! "Kanban card is closed; finished work is world-local and never peers"
-           {:id (:id card) :state (:state card) :status (card-status card)}))
-  (when-not (contains? sendable-statuses (card-status card))
+           {:id (:id card) :state (:state card) :lane (card-lane card)}))
+  (when-not (contains? sendable-lanes (card-lane card))
     (fail! "Kanban card is in-flight; only pending or refinement cards peer"
            {:id (:id card)
-            :status (card-status card)
-            :sendable (sort sendable-statuses)}))
+            :lane (card-lane card)
+            :sendable (sort sendable-lanes)}))
   card)
 
 (defn- card->send-map
@@ -388,7 +387,7 @@
   pending defaults, so the two boards share one defaulting path."
   [card]
   (cond-> {:title (:title card)}
-    (card-status card) (assoc :status (card-status card))
+    (card-lane card) (assoc :lane (card-lane card))
     (attr-get card priority-attr) (assoc :priority (attr-get card priority-attr))
     (attr-get card :body) (assoc :body (attr-get card :body))
     (attr-get card source-attr) (assoc :source (attr-get card source-attr))))
@@ -412,7 +411,7 @@
 (defn- epic-payload
   "Return the `{:epic ... :features [...] :from ...}` payload for an epic bundle.
 
-  Every direct feature child must occupy a known lane: an unknown or nil status
+  Every direct feature child must occupy a known lane: an unknown or nil lane
   is corruption and fails loudly naming the offending children, never a silent
   drop that could ship a partial bundle. In-flight children (claimed or
   in_review) block the whole send and are named in the failure; closed children
@@ -422,22 +421,22 @@
   [from epic children]
   (require-sendable! epic)
   (let [open (remove #(= "closed" (:state %)) children)
-        unknown (filterv #(not (contains? active-child-statuses (card-status %))) open)]
+        unknown (filterv #(not (contains? active-child-lanes (card-lane %))) open)]
     (when (seq unknown)
       (fail! "Epic has feature children in an unknown or missing board lane"
              {:epic (:id epic)
-              :invalid (mapv (fn [c] {:id (:id c) :status (card-status c)}) unknown)
-              :known (sort active-child-statuses)}))
-    (let [blocked (filterv #(contains? #{"claimed" "in_review"} (card-status %)) open)]
+              :invalid (mapv (fn [c] {:id (:id c) :lane (card-lane c)}) unknown)
+              :known (sort active-child-lanes)}))
+    (let [blocked (filterv #(contains? #{"claimed" "in_review"} (card-lane %)) open)]
       (when (seq blocked)
         (fail! "Epic has in-flight feature children; claimed or in_review work never peers"
                {:epic (:id epic)
-                :blocking (mapv (fn [c] {:id (:id c) :title (:title c) :status (card-status c)}) blocked)})))
-    (let [features (filterv #(contains? sendable-statuses (card-status %)) open)]
+                :blocking (mapv (fn [c] {:id (:id c) :title (:title c) :lane (card-lane c)}) blocked)})))
+    (let [features (filterv #(contains? sendable-lanes (card-lane %)) open)]
       (when (empty? features)
         (fail! "Epic has no pending or refinement feature children to send"
                {:epic (:id epic)
-                :children (mapv (fn [c] {:id (:id c) :status (card-status c)}) children)}))
+                :children (mapv (fn [c] {:id (:id c) :lane (card-lane c)}) children)}))
       {:epic (card->send-map epic)
        :features (mapv card->send-map features)
        :from from})))
@@ -466,27 +465,27 @@
     name))
 
 (defn- preflight-target!
-  "Fail loudly unless a peer advertises `kanban.send.v1`; return its describe result.
+  "Fail loudly unless a peer advertises `kanban.send.v1`; return its guild listing.
 
-  A peer with no guild API rejects `guild.describe` (a domain error) and is
+  A peer with no guild API rejects `guild list` (a domain error) and is
   reframed as running no kanban peering; a peer whose guild lacks the op fails
   with the same remedy. Any other failure propagates."
   [peerish]
-  (let [described (try
-                    (*describe-peer* peerish)
-                    (catch clojure.lang.ExceptionInfo ex
-                      (if (domain-error? ex)
-                        (fail! "Target peer runs no guild API and cannot accept kanban.send.v1"
-                               {:peer peerish
-                                :remedy "install skein.spools.guild and run kanban install-peering! on the target"})
-                        (throw ex))))]
-    (validate-describe! peerish described)
-    (when-not (advertises-send? described)
+  (let [listed (try
+                 (*list-peer-guild* peerish)
+                 (catch clojure.lang.ExceptionInfo ex
+                   (if (domain-error? ex)
+                     (fail! "Target peer runs no guild API and cannot accept kanban.send.v1"
+                            {:peer peerish
+                             :remedy "install skein.spools.guild and run kanban install-peering! on the target"})
+                     (throw ex))))]
+    (validate-guild-list! peerish listed)
+    (when-not (advertises-send? listed)
       (fail! "Target peer does not advertise kanban.send.v1 (no kanban peering, or an older kanban)"
              {:peer peerish
-              :active (mapv #(get % "name") (get described "active"))
+              :active (mapv #(get % "name") (get listed "active"))
               :remedy "run kanban install-peering! on the target after installing guild"}))
-    described))
+    listed))
 
 ;; The remote kanban.send.v1 result rides back JSON-decoded (string keys). Its
 ;; shape is the receive op's return contract, so a successful call must produce
@@ -558,7 +557,7 @@
   Resolves the local card, refuses in-flight or finished work (with the lane in
   the error), and mirrors the board tier — titles, bodies, priority, source, and
   lane — as a `kanban.send.v1` payload stamped with `:from` provenance. Preflights
-  the target's `guild.describe` for the op, sends the payload as one JSON `:argv`
+  the target's `guild list` for the op, sends the payload as one JSON `:argv`
   string, and validates the peer's reply (`validate-send-result!`) before
   recording the created remote ids as a note on the local card. Returns the
   remote ids, conforming to `::send-result`. The local card's lane is never
@@ -633,21 +632,21 @@
 (defn install-peering!
   "Register the receive and send-side board-peering ops after guild and kanban.
 
-  Opt-in: trusted config wires this in after `(skein.spools.guild/install!)` and
+  Opt-in: trusted config wires this in after `(skein.spools.guild/install! runtime)` and
   `(ct.spools.kanban/install!)`. It never installs guild itself — guild's
   lifecycle has exactly one owner, the repo config. Both preconditions fail loudly
   with the failing state and the remedy. Registers three ops: the `kanban.send.v1`
   guild receive op, and the local `kanban-peers` and `kanban-send` ops. Every
-  registration upserts (`guild/defop!` and `register-or-replace-op!`), so
+  registration upserts (`guild/register-op!` and `register-or-replace-op!`), so
   re-running is reload-safe."
   []
   (let [rt (current/runtime)
-        guild-defop! (requiring-resolve 'skein.spools.guild/defop!)]
-    (when-not (op-registered? rt "guild.describe")
+        guild-register-op! (requiring-resolve 'skein.spools.guild/register-op!)]
+    (when-not (op-registered? rt "guild")
       (fail! "kanban install-peering! requires the guild spool to be installed first"
-             {:missing "guild.describe"
+             {:missing "guild"
               :registered-ops (mapv :name (weaver/ops rt))
-              :remedy "add (skein.spools.guild/install!) to your init.clj before install-peering!"}))
+              :remedy "run (skein.spools.guild/install! runtime) before install-peering!"}))
     (when-not (op-registered? rt "kanban")
       (fail! "kanban install-peering! requires the kanban board to be installed first"
              {:missing "kanban"
@@ -655,11 +654,11 @@
               :remedy "run (ct.spools.kanban/install!) before install-peering!"}))
     {:installed true
      :namespace 'ct.spools.kanban.peering
-     :op (guild-defop! 'kanban.send.v1
-                       {:doc "Receive a peered kanban card or epic bundle onto this board."
-                        :spec ::send-input
-                        :returns send-returns}
-                       'ct.spools.kanban.peering/send-op)
+     :op (guild-register-op! rt 'kanban.send.v1
+                             {:doc "Receive a peered kanban card or epic bundle onto this board."
+                              :input-spec ::send-input
+                              :returns send-returns}
+                             'ct.spools.kanban.peering/send-op)
      :ops [(register-or-replace-op! rt 'kanban-peers
                                     {:doc (:doc kanban-peers-arg-spec)
                                      :arg-spec kanban-peers-arg-spec
