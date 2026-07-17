@@ -345,10 +345,26 @@
   silently-droppable one."
   #{"pending" "refinement" "claimed" "in_review"})
 
+(def ^:private card-types
+  "The board's card types. An absent `kanban/type` reads as `feature`; a present
+  value outside this set is drift."
+  #{"feature" "epic"})
+
 (defn- card-type
-  "Return a card's kanban type, defaulting to feature."
+  "Return a card's kanban type.
+
+  An absent `kanban/type` reads as `feature`, the board's documented default. A
+  value outside the known types fails loudly rather than passing as a feature and
+  peering as one."
   [strand]
-  (or (attr-get strand type-attr) "feature"))
+  (let [type (attr-get strand type-attr)]
+    (cond
+      (nil? type) "feature"
+      (contains? card-types type) type
+      :else (fail! "kanban/type must be feature or epic"
+                   {:id (:id strand)
+                    :type type
+                    :allowed (sort card-types)}))))
 
 (defn- card-lane
   "Return a card's board lane."
@@ -392,15 +408,45 @@
     (attr-get card :body) (assoc :body (attr-get card :body))
     (attr-get card source-attr) (assoc :source (attr-get card source-attr))))
 
+(defn- card-claiming?
+  "Return true when a strand claims card-ness by carrying the `kanban/card` marker.
+
+  Any value is a claim, because only `\"true\"` marks a real card: a drifted
+  marker has to be caught rather than read as one of the ordinary non-card
+  children."
+  [strand]
+  (some? (attr-get strand card-attr)))
+
+(defn- feature-child?
+  "Return true when an epic's child is a valid feature card of the board."
+  [strand]
+  (and (= "true" (attr-get strand card-attr))
+       (contains? #{nil "feature"} (attr-get strand type-attr))))
+
 (defn- epic-features
-  "Return an epic's direct `parent-of` feature-card children, oldest first\n  (created_at is second-granular, so same-second siblings tie-break by id)."
+  "Return an epic's direct `parent-of` feature-card children, oldest first
+  (created_at is second-granular, so same-second siblings tie-break by id).
+
+  Only children claiming card-ness are bundle members. Notes ride the `notes`
+  relation, and tasks and the execution strands an engine hangs under a card are
+  unmarked by convention, so none of them claim `kanban/card` and all pass
+  through untouched. A child that does claim card-ness must be a valid feature —
+  a drifted marker, a nested epic, or an unknown `kanban/type` fails loudly
+  rather than dropping out of a bundle that then reports success."
   [rt epic]
-  (let [child-ids (mapv :to_strand_id (graph/outgoing-edges rt [(:id epic)] "parent-of"))]
-    (->> (graph/strands-by-ids rt child-ids)
-         (filter #(= "true" (attr-get % card-attr)))
-         (filter #(= "feature" (card-type %)))
-         (sort-by (juxt :created_at :id))
-         vec)))
+  (let [child-ids (mapv :to_strand_id (graph/outgoing-edges rt [(:id epic)] "parent-of"))
+        children (filterv card-claiming? (graph/strands-by-ids rt child-ids))
+        unexpected (remove feature-child? children)]
+    (when (seq unexpected)
+      (fail! "Epic has direct card children that are not feature cards"
+             {:epic (:id epic)
+              :unexpected (mapv (fn [child]
+                                  {:id (:id child)
+                                   :card (attr-get child card-attr)
+                                   :type (attr-get child type-attr)})
+                                unexpected)
+              :expected "kanban/card \"true\" with kanban/type feature (or absent)"}))
+    (vec (sort-by (juxt :created_at :id) children))))
 
 (defn- feature-payload
   "Return the `{:card ... :from ...}` payload for a single feature card."

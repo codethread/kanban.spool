@@ -308,6 +308,27 @@
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not an epic"
                                 (op! rt "add" "Bad parent" "--epic" feat-id))))))))
 
+(deftest kanban-type-defaults-to-feature-but-drift-fails-loudly
+  (with-kanban
+    (fn [rt]
+      (testing "a card that predates kanban/type reads as a feature"
+        (let [legacy (weaver/add rt {:title "Typeless card"
+                                     :attributes {:kanban/card "true"
+                                                  :kanban/lane "pending"}})]
+          (is (= (:id legacy) (get-in (op! rt "next") [:next :id])))
+          (is (= "feature" (:type (first (:pending (op! rt "board"))))))))
+      (testing "a kanban/type outside feature/epic is drift, not a feature"
+        (let [drifted (weaver/add rt {:title "Story card"
+                                      :attributes {:kanban/card "true"
+                                                   :kanban/lane "pending"
+                                                   :kanban/type "story"}})
+              ex (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                                       #"kanban/type must be feature or epic"
+                                       (op! rt "board")))]
+          (is (= (:id drifted) (:id (ex-data ex))))
+          (is (= "story" (:type (ex-data ex))))
+          (is (= ["epic" "feature"] (:allowed (ex-data ex)))))))))
+
 (deftest kanban-notes-and-card-view
   (with-kanban
     (fn [rt]

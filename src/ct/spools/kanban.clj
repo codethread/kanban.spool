@@ -71,9 +71,20 @@
   (attr-get strand k))
 
 (defn- card-type
-  "Return a card's kanban type, defaulting to feature."
+  "Return a card's kanban type.
+
+  An absent `kanban/type` reads as `feature`, the board's documented default. A
+  value outside the known types is drift: it fails loudly rather than passing as
+  a feature and quietly taking the feature path."
   [strand]
-  (or (attr-value strand type-attr) "feature"))
+  (let [type (attr-value strand type-attr)]
+    (cond
+      (nil? type) "feature"
+      (contains? card-types type) type
+      :else (throw (ex-info "kanban/type must be feature or epic"
+                            {:id (:id strand)
+                             :type type
+                             :allowed (sort card-types)})))))
 
 (defn- card-priority
   "Return a card's priority, defaulting to p3 for cards that predate priorities."

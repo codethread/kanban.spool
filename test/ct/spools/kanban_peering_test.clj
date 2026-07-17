@@ -280,6 +280,40 @@
                                          (#'peering/build-payload rt {:board "b" :card id} (card-strand rt id))))]
             (is (= "closed" (:state (ex-data ex))))))))))
 
+(deftest send-refuses-an-epic-with-unexpected-card-children
+  (with-peering
+    (fn [rt]
+      (let [epic (add-card! "Theme epic" {"--type" "epic"})
+            feature (add-card! "Real slice" {"--epic" epic})
+            nested (add-card! "Nested theme" {"--type" "epic"})
+            drifted (add-card! "Drifted slice" {"--epic" epic})]
+        (weaver/update rt epic {:edges [{:type "parent-of" :to nested}]})
+        (weaver/update rt drifted {:attributes {:kanban/type "story"}})
+        (testing "a nested epic and a drifted type are named, never dropped from the bundle"
+          (let [ex (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                                         #"not feature cards"
+                                         (#'peering/build-payload rt {:board "b" :card epic}
+                                                                  (card-strand rt epic))))]
+            (is (= epic (:epic (ex-data ex))))
+            (is (= #{{:id nested :card "true" :type "epic"}
+                     {:id drifted :card "true" :type "story"}}
+                   (set (:unexpected (ex-data ex)))))
+            (is (some? feature) "the valid sibling exists but the bundle still refuses")))))))
+
+(deftest send-bundles-an-epic-past-its-non-card-children
+  (with-peering
+    (fn [rt]
+      ;; tasks, notes, and engine execution strands hang under cards unmarked:
+      ;; they are not board cards, so they are not bundle members either
+      (let [epic (add-card! "Theme epic" {"--type" "epic"})
+            work (weaver/add rt {:title "Coordination strand" :attributes {:kind "task"}})]
+        (add-card! "Real slice" {"--epic" epic})
+        (weaver/update rt epic {:edges [{:type "parent-of" :to (:id work)}]})
+        (kanban/note! epic "Handover" {"--by" "agent"})
+        (let [payload (#'peering/build-payload rt {:board "b" :card epic} (card-strand rt epic))]
+          (is (= [{:title "Real slice" :lane "pending" :priority "p3"}]
+                 (:features payload))))))))
+
 (deftest send-refuses-an-epic-with-in-flight-children
   (with-peering
     (fn [rt]

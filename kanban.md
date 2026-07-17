@@ -32,7 +32,7 @@ Card state lives under the `kanban/*` attribute topic:
 | Attribute | Meaning |
 | --- | --- |
 | `kanban/card` | String `"true"` for card strands. |
-| `kanban/type` | `feature` (default) or `epic` (grouping card; `parent-of` its features). |
+| `kanban/type` | `feature` (default: cards without the attribute read as features) or `epic` (grouping card; `parent-of` its features). Any other value is drift and fails loudly. |
 | `kanban/lane` | Active lane: `refinement`, `pending`, `claimed`, or `in_review`. Removed on finish. |
 | `kanban/outcome` | Explicit finish result on a closed card, such as `done` or `abandoned`. |
 | `kanban/priority` | `p1`, `p2`, `p3` (default), or `p4`; cards without the attribute read as `p3`. |
@@ -176,7 +176,7 @@ Peering moves the **board tier only** — the shape of the work, not its executi
 | An epic card and its pending/refinement feature children as one bundle. | Notes, and everything under them. |
 | `:from` provenance: the sending board's name and the local card id. | Claims (`owner`/`branch`/`worktree`) and the local card id as an identity. |
 
-Only queued work travels. A `claimed`, `in_review`, or closed card is in-flight or finished work that is world-local; `kanban-send` refuses it loudly with the blocking lane. An epic refuses to send while any feature child is `claimed` or `in_review` (the blocking children are named); closed children are finished and simply stay home. Received cards are **new local cards** on the target board — they travel the same `add!` path as any local card, take the target's own ids and defaults, and carry no back-reference beyond the `kanban/from` stamp. Nothing on either board's lane changes as a side effect: closing the source card after a send stays the caller's choice.
+Only queued work travels. A `claimed`, `in_review`, or closed card is in-flight or finished work that is world-local; `kanban-send` refuses it loudly with the blocking lane. An epic refuses to send while any feature child is `claimed` or `in_review` (the blocking children are named); closed children are finished and simply stay home. A bundle carries every direct child that claims card-ness (`kanban/card`), so a nested epic or a drifted marker or type is named in a loud failure rather than dropped from a bundle that then reports success; unmarked children — tasks, notes, and the execution strands an engine hangs under a card — are not cards and never join the bundle. Received cards are **new local cards** on the target board — they travel the same `add!` path as any local card, take the target's own ids and defaults, and carry no back-reference beyond the `kanban/from` stamp. Nothing on either board's lane changes as a side effect: closing the source card after a send stays the caller's choice.
 
 ### Loading
 
