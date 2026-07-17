@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Run a previous release's tests against the working tree. Red means the
+# published contract changed under its name; green is an alarm, not proof.
+# Usage: bin/compat-alarm <previous-release-tag>
+set -euo pipefail
+
+tag="${1:?usage: compat-alarm <previous-release-tag>}"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+git archive "$tag" | tar -x -C "$tmp"
+
+src_paths=""
+while IFS= read -r src; do
+  src_paths+="\"$src\" "
+done < <(find . -type d -name src -not -path './.git/*' | sort)
+
+test_paths=""
+while IFS= read -r test; do
+  test_paths+="\"$test\" "
+done < <(find "$tmp" -type d -name test | sort)
+
+nss=""
+while IFS= read -r file; do
+  rel="${file#*/test/}"
+  nss+="$(echo "${rel%.clj}" | tr '/_' '.-') "
+done < <(find "$tmp" -path '*/test/*' -name '*_test.clj' | sort)
+[ -n "$nss" ] || { echo "no test namespaces found at $tag"; exit 2; }
+
+requires=""
+syms=""
+for ns in $nss; do
+  requires+="'$ns "
+  syms+="'$ns "
+done
+
+exec clojure -Sdeps "{:paths [${src_paths}${test_paths}]}" -M -e "
+(require 'clojure.test ${requires})
+(let [result (apply clojure.test/run-tests [${syms}])]
+  (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1)))"

@@ -1,0 +1,4 @@
+;; Advisory manifest for tooling that materializes consumer spool entries.
+;; The Skein core loader does not read this file.
+{:spool/format 1
+ :roots {ct.spools/kanban "."}}
