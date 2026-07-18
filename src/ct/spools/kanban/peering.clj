@@ -177,7 +177,7 @@
   (let [id (get-in (kanban/add! (:title card) (merge (card->flags card) extra-flags))
                    [:card :id])]
     (when stamp
-      (weaver/update rt id {:attributes {:kanban/from stamp}}))
+      (weaver/update! rt id {:attributes {:kanban/from stamp}}))
     id))
 
 (defn send-op

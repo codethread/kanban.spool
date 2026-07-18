@@ -269,7 +269,7 @@
             (is (= [blocker old-default someday] (mapv :id pending)))
             (is (= ["p1" "p3" "p4"] (mapv :priority pending)))))
         (testing "cards that predate priorities read as p3"
-          (let [legacy (weaver/add rt {:title "Legacy card"
+          (let [legacy (weaver/add! rt {:title "Legacy card"
                                        :attributes {:kanban/card "true"
                                                     :kanban/lane "pending"
                                                     :kanban/type "feature"}})
@@ -314,13 +314,13 @@
   (with-kanban
     (fn [rt]
       (testing "a card that predates kanban/type reads as a feature"
-        (let [legacy (weaver/add rt {:title "Typeless card"
+        (let [legacy (weaver/add! rt {:title "Typeless card"
                                      :attributes {:kanban/card "true"
                                                   :kanban/lane "pending"}})]
           (is (= (:id legacy) (get-in (op! rt "next") [:next :id])))
           (is (= "feature" (:type (first (:pending (op! rt "board"))))))))
       (testing "a kanban/type outside feature/epic is drift, not a feature"
-        (let [drifted (weaver/add rt {:title "Story card"
+        (let [drifted (weaver/add! rt {:title "Story card"
                                       :attributes {:kanban/card "true"
                                                    :kanban/lane "pending"
                                                    :kanban/type "story"}})
@@ -336,11 +336,11 @@
     (fn [rt]
       (let [card-id (get-in (op! rt "add" "Crashable feature") [:card :id])]
         (op! rt "claim" card-id "--owner" "agent-a" "--branch" "crashable")
-        (let [task (weaver/add rt {:title "Implement it" :attributes {:kind "task"}})
-              review (weaver/add rt {:title "Review it" :attributes {:kind "review"}})]
-          (weaver/update rt card-id {:edges [{:type "parent-of" :to (:id task)}
+        (let [task (weaver/add! rt {:title "Implement it" :attributes {:kind "task"}})
+              review (weaver/add! rt {:title "Review it" :attributes {:kind "review"}})]
+          (weaver/update! rt card-id {:edges [{:type "parent-of" :to (:id task)}
                                              {:type "parent-of" :to (:id review)}]})
-          (weaver/update rt (:id review) {:edges [{:type "depends-on" :to (:id task)}]})
+          (weaver/update! rt (:id review) {:edges [{:type "depends-on" :to (:id task)}]})
           (op! rt "note" card-id "Decided to keep lane names" "--by" "agent-a")
           (op! rt "note" card-id
                "Done: impl. Next: review. Validation: tests green."
@@ -460,15 +460,15 @@
         (op! rt "claim" card-id "--owner" "agent" "--branch" "review-branch")
         (testing "needs-review is always present and empty before any review work"
           (is (= [] (:needs-review (op! rt "board")))))
-        (let [ready-review (weaver/add rt {:title "Review ready"
+        (let [ready-review (weaver/add! rt {:title "Review ready"
                                            :attributes {:workflow/checkpoint-kind "human"}})
-              impl (weaver/add rt {:title "Implement" :attributes {:kind "task"}})
-              blocked-review (weaver/add rt {:title "Review blocked" :attributes {:kind "review"}})]
-          (weaver/update rt card-id {:edges [{:type "parent-of" :to (:id ready-review)}
+              impl (weaver/add! rt {:title "Implement" :attributes {:kind "task"}})
+              blocked-review (weaver/add! rt {:title "Review blocked" :attributes {:kind "review"}})]
+          (weaver/update! rt card-id {:edges [{:type "parent-of" :to (:id ready-review)}
                                              {:type "parent-of" :to (:id impl)}
                                              {:type "parent-of" :to (:id blocked-review)}]})
           ;; blocked-review depends on impl, so it stays out of the ready frontier
-          (weaver/update rt (:id blocked-review) {:edges [{:type "depends-on" :to (:id impl)}]})
+          (weaver/update! rt (:id blocked-review) {:edges [{:type "depends-on" :to (:id impl)}]})
           (testing "needs-review surfaces only ready review children with the card branch"
             (let [entries (:needs-review (op! rt "board"))]
               (is (vector? entries))
@@ -483,7 +483,7 @@
             b-id (get-in (op! rt "add" "Card B") [:card :id])
             edge (fn [related] (mapv (fn [e] [(:relation e) (get-in e [:strand :id])]) related))]
         ;; A depends-on B: A is the dependent, B is the dependency
-        (weaver/update rt a-id {:edges [{:type "depends-on" :to b-id}]})
+        (weaver/update! rt a-id {:edges [{:type "depends-on" :to b-id}]})
         (testing "the dependent card sees the depends-on direction"
           (is (= [["depends-on" b-id]] (edge (:related (op! rt "card" a-id))))))
         (testing "the dependency card sees the depended-on-by direction"
@@ -491,8 +491,8 @@
         (testing "incoming edges from non-card strands surface too"
           ;; regression: depends-on subgraph expansion walks outgoing edges only,
           ;; so a card-rooted scan never saw task -> card blockers
-          (let [task (weaver/add rt {:title "Cross-feature task" :attributes {:kind "task"}})]
-            (weaver/update rt (:id task) {:edges [{:type "depends-on" :to b-id}]})
+          (let [task (weaver/add! rt {:title "Cross-feature task" :attributes {:kind "task"}})]
+            (weaver/update! rt (:id task) {:edges [{:type "depends-on" :to b-id}]})
             (is (= #{["depended-on-by" a-id] ["depended-on-by" (:id task)]}
                    (set (edge (:related (op! rt "card" b-id))))))))
         (testing "related is always present and empty for an unlinked card"
@@ -536,8 +536,8 @@
                             (= task-id (:to_strand_id %))) edges))))
         (testing "task list projects only marked tasks, not other parent-of children"
           ;; a bare strand parented under the feature is not a task (marker-selected)
-          (let [plain (weaver/add rt {:title "Not a task"})]
-            (weaver/update rt feature-id {:edges [{:type "parent-of" :to (:id plain)}]})
+          (let [plain (weaver/add! rt {:title "Not a task"})]
+            (weaver/update! rt feature-id {:edges [{:type "parent-of" :to (:id plain)}]})
             (let [listed (op! rt "task" "list" feature-id)]
               (is (= "kanban task list" (:operation listed)))
               (is (= [task-id] (mapv :id (:tasks listed))))
@@ -545,7 +545,7 @@
         (testing "task add fails loudly on a missing title, non-card feature, and unknown action"
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"title must be a non-blank"
                                 (op! rt "task" "add" feature-id)))
-          (let [orphan (weaver/add rt {:title "Loose strand"})]
+          (let [orphan (weaver/add! rt {:title "Loose strand"})]
             (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not a kanban card"
                                   (op! rt "task" "add" (:id orphan) "x"))))
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"action must be add or list"
@@ -572,8 +572,8 @@
                                     "--depends-on" ready-id) [:task :id])
             status-of (fn [] (into {} (map (juxt :id :status))
                                    (:tasks (op! rt "task" "list" feature-id))))]
-        (weaver/update rt doing-id {:attributes {:owner "agent-a"}})
-        (weaver/update rt done-id {:state "closed"})
+        (weaver/update! rt doing-id {:attributes {:owner "agent-a"}})
+        (weaver/update! rt done-id {:state "closed"})
         (testing "the four statuses derive purely from graph + core attrs"
           (let [status (status-of)]
             (is (= "ready" (status ready-id)) "active, dependencies met, no owner")
@@ -581,7 +581,7 @@
             (is (= "closed" (status done-id)) "closed strand")
             (is (= "blocked" (status blocked-id)) "active with an unmet depends-on target")))
         (testing "closing the dependency unblocks its dependent"
-          (weaver/update rt ready-id {:state "closed"})
+          (weaver/update! rt ready-id {:state "closed"})
           (let [status (status-of)]
             (is (= "closed" (status ready-id)) "the closed dependency reads as closed")
             (is (= "ready" (status blocked-id)) "dependency closed, no owner -> ready")))))))
@@ -592,7 +592,7 @@
       (let [feature-id (get-in (op! rt "add" "Card-view task feature") [:card :id])
             ready-id (get-in (op! rt "task" "add" feature-id "Ready task") [:task :id])
             doing-id (get-in (op! rt "task" "add" feature-id "Doing task") [:task :id])]
-        (weaver/update rt doing-id {:attributes {:owner "agent-a"}})
+        (weaver/update! rt doing-id {:attributes {:owner "agent-a"}})
         (testing "card view lists child tasks with their derived statuses"
           (let [tasks (:tasks (op! rt "card" feature-id))]
             (is (= #{ready-id doing-id} (set (map :id tasks))))
@@ -615,7 +615,7 @@
       (let [feature-id (get-in (op! rt "add" "Doing-task feature") [:card :id])]
         (op! rt "claim" feature-id "--owner" "agent-a" "--branch" "doing-branch")
         (let [doing-id (get-in (op! rt "task" "add" feature-id "Wire the thing") [:task :id])]
-          (weaver/update rt doing-id {:attributes {:owner "agent-a"}})
+          (weaver/update! rt doing-id {:attributes {:owner "agent-a"}})
           (testing "the claimed lane carries the derived doing-task title"
             (let [claimed (some #(when (= feature-id (:id %)) %) (:claimed (op! rt "board")))]
               (is (= "Wire the thing" (get-in claimed [:doing-task :title])))
@@ -725,7 +725,7 @@
 (deftest kanban-card-view-rejects-a-malformed-stored-run
   (with-kanban
     (fn [rt]
-      (let [card (weaver/add rt {:title "Malformed run card"
+      (let [card (weaver/add! rt {:title "Malformed run card"
                                  :attributes {:kanban/card "true"
                                               :kanban/lane "claimed"
                                               :kanban/type "feature"
@@ -752,7 +752,7 @@
 (deftest kanban-batch-weave-creates-cards-and-dependencies
   (with-kanban
     (fn [rt]
-      (let [existing (weaver/add rt {:title "Existing blocker"})
+      (let [existing (weaver/add! rt {:title "Existing blocker"})
             result (patterns/weave! rt :kanban-batch
                                     {:items [{:key "design"
                                               :title "Design batch"
@@ -802,12 +802,12 @@
   (with-kanban
     (fn [rt]
       (let [root-id (get-in (op! rt "add" "Export me") [:card :id])
-            child (weaver/add rt {:title "Child work" :attributes {:kind "task"}})
-            dep (weaver/add rt {:title "Dependency" :attributes {:kind "task"}})]
-        (weaver/update rt root-id {:edges [{:type "parent-of" :to (:id child)}
+            child (weaver/add! rt {:title "Child work" :attributes {:kind "task"}})
+            dep (weaver/add! rt {:title "Dependency" :attributes {:kind "task"}})]
+        (weaver/update! rt root-id {:edges [{:type "parent-of" :to (:id child)}
                                            {:type "parent-of" :to (:id dep)}]})
-        (weaver/update rt (:id child) {:edges [{:type "depends-on" :to (:id dep)}]})
-        (weaver/update rt (:id dep) {:state "closed"})
+        (weaver/update! rt (:id child) {:edges [{:type "depends-on" :to (:id dep)}]})
+        (weaver/update! rt (:id dep) {:state "closed"})
         (let [result (export! rt root-id)
               strand-ids (set (map :id (:strands result)))]
           (is (= "kanban-export" (:operation result)))
@@ -830,7 +830,7 @@
       (testing "a known strand that is not a kanban card fails loudly"
         ;; regression: the op once exported any existing strand's subtree
         ;; instead of enforcing its documented feature-or-epic-card contract
-        (let [plain (weaver/add rt {:title "Not a card"})]
+        (let [plain (weaver/add! rt {:title "Not a card"})]
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not a kanban card"
                                 (export! rt (:id plain)))))))))
 

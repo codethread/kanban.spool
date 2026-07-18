@@ -173,10 +173,10 @@
     (when (and epic-id (= "epic" (get flags "--type")))
       (throw (ex-info "kanban epics cannot nest under other epics" {:epic epic-id})))
     (let [epic (some-> epic-id epic-strand)
-          strand (weaver/add rt {:title title
+          strand (weaver/add! rt {:title title
                                  :attributes (card-attributes flags)})]
       (when epic
-        (weaver/update rt (:id epic) {:edges [{:type "parent-of" :to (:id strand)}]}))
+        (weaver/update! rt (:id epic) {:edges [{:type "parent-of" :to (:id strand)}]}))
       (cond-> {:operation "kanban add"
                :card (entity-projection strand)}
         epic (assoc :epic (:id epic))))))
@@ -268,7 +268,7 @@
   attribute map from a possibly-stale read. `weaver/update` returns the full merged
   strand, so callers still see every attribute in the result."
   [strand attrs state]
-  (weaver/update (current/runtime)
+  (weaver/update! (current/runtime)
                  (:id strand)
                  (cond-> {:attributes attrs}
                    state (assoc :state state))))
@@ -480,13 +480,13 @@
         title (require-non-blank! :title title)
         rt (current/runtime)
         deps (get flags "--depends-on")
-        task (weaver/add rt {:title title
+        task (weaver/add! rt {:title title
                              :attributes (cond-> {task-attr "true"
                                                   :kind "task"}
                                            (get flags "--body") (assoc :body (get flags "--body")))})]
-    (weaver/update rt (:id feature) {:edges [{:type "parent-of" :to (:id task)}]})
+    (weaver/update! rt (:id feature) {:edges [{:type "parent-of" :to (:id task)}]})
     (when (seq deps)
-      (weaver/update rt (:id task) {:edges (mapv (fn [dep] {:type "depends-on" :to dep}) deps)}))
+      (weaver/update! rt (:id task) {:edges (mapv (fn [dep] {:type "depends-on" :to dep}) deps)}))
     {:operation "kanban task add"
      :feature (:id feature)
      :task (entity-projection (weaver/show rt (:id task)))}))

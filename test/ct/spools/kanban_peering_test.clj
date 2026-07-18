@@ -287,8 +287,8 @@
             feature (add-card! "Real slice" {"--epic" epic})
             nested (add-card! "Nested theme" {"--type" "epic"})
             drifted (add-card! "Drifted slice" {"--epic" epic})]
-        (weaver/update rt epic {:edges [{:type "parent-of" :to nested}]})
-        (weaver/update rt drifted {:attributes {:kanban/type "story"}})
+        (weaver/update! rt epic {:edges [{:type "parent-of" :to nested}]})
+        (weaver/update! rt drifted {:attributes {:kanban/type "story"}})
         (testing "a nested epic and a drifted type are named, never dropped from the bundle"
           (let [ex (is (thrown-with-msg? clojure.lang.ExceptionInfo
                                          #"not feature cards"
@@ -306,9 +306,9 @@
       ;; tasks, notes, and engine execution strands hang under cards unmarked:
       ;; they are not board cards, so they are not bundle members either
       (let [epic (add-card! "Theme epic" {"--type" "epic"})
-            work (weaver/add rt {:title "Coordination strand" :attributes {:kind "task"}})]
+            work (weaver/add! rt {:title "Coordination strand" :attributes {:kind "task"}})]
         (add-card! "Real slice" {"--epic" epic})
-        (weaver/update rt epic {:edges [{:type "parent-of" :to (:id work)}]})
+        (weaver/update! rt epic {:edges [{:type "parent-of" :to (:id work)}]})
         (kanban/note! epic "Handover" {"--by" "agent"})
         (let [payload (#'peering/build-payload rt {:board "b" :card epic} (card-strand rt epic))]
           (is (= [{:title "Real slice" :lane "pending" :priority "p3"}]
@@ -557,7 +557,7 @@
       (let [epic (add-card! "Corrupt epic" {"--type" "epic"})
             good (add-card! "Good feature" {"--epic" epic})
             bad (add-card! "Corrupt feature" {"--epic" epic})]
-        (weaver/update rt bad {:attributes {:kanban/lane "bogus"}})
+        (weaver/update! rt bad {:attributes {:kanban/lane "bogus"}})
         (let [ex (is (thrown-with-msg? clojure.lang.ExceptionInfo #"unknown or missing board lane"
                                        (#'peering/build-payload rt {:board "b" :card epic} (card-strand rt epic))))]
           (is (= [{:id bad :lane "bogus"}] (:invalid (ex-data ex)))
