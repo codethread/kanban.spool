@@ -91,7 +91,9 @@
 (deftest install-declares-kanban-attr-namespace
   (with-kanban
     (fn [rt]
-      (let [decl (vocab/declaration rt :attr-namespace "kanban")]
+      (let [decl (->> (vocab/declarations rt {:kind :attr-namespace})
+                      (filter #(= "kanban" (:name %)))
+                      first)]
         (is (some? decl) "install! declares the kanban/* attribute namespace")
         (is (= :skein/spools-kanban (:owner decl))
             "kanban/* is owned by the single verified use-key :skein/spools-kanban")
