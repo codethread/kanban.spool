@@ -449,6 +449,20 @@
       (finish-epic! rt id strand outcome)
       (finish-feature! id strand outcome))))
 
+(defn- validated-restore-lane
+  "Return card's stored `kanban/abandon-restore-lane`, failing loudly on a bad marker.
+
+  reopen consumes markers a prior abandon wrote. A missing or drifted marker
+  would otherwise restore a card into an unknown lane; validating every marker
+  up front — before any mutation — keeps a bad marker from leaving a
+  half-reopened cascade behind."
+  [card]
+  (let [lane (attr-value card restore-lane-attr)]
+    (when-not (contains? active-lanes lane)
+      (throw (ex-info "Kanban reopen found an invalid abandon-restore-lane marker"
+                      {:id (:id card) :restore-lane lane :allowed (sort active-lanes)})))
+    lane))
+
 (defn reopen!
   "Reopen an abandoned epic, reversing exactly the cascade a matching abandon closed.
 
@@ -469,18 +483,19 @@
     (when-not (= "abandoned" (attr-value strand outcome-attr))
       (throw (ex-info "Kanban reopen reverses an abandoned epic only"
                       {:id id :outcome (attr-value strand outcome-attr)})))
-    (let [restore-lane (attr-value strand restore-lane-attr)
-          cascaded (filterv #(and (= "closed" (:state %))
+    (let [cascaded (filterv #(and (= "closed" (:state %))
                                   (some? (attr-value % restore-lane-attr)))
-                            (direct-feature-children rt strand))]
-      (doseq [child cascaded]
+                            (direct-feature-children rt strand))
+          epic-restore-lane (validated-restore-lane strand)
+          child-restore-lanes (mapv validated-restore-lane cascaded)]
+      (doseq [[child lane] (map vector cascaded child-restore-lanes)]
         (update-card! child
-                      {lane-attr (attr-value child restore-lane-attr)
+                      {lane-attr lane
                        outcome-attr nil
                        restore-lane-attr nil}
                       "active"))
       (let [updated (update-card! strand
-                                  {lane-attr restore-lane
+                                  {lane-attr epic-restore-lane
                                    outcome-attr nil
                                    restore-lane-attr nil}
                                   "active")]

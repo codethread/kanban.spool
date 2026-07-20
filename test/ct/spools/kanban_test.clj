@@ -431,6 +431,25 @@
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"reverses an abandoned epic only"
                                 (op! rt "reopen" epic-id))))))))
 
+(deftest kanban-reopen-rejects-a-drifted-restore-lane-before-mutating
+  (with-kanban
+    (fn [rt]
+      (let [epic-id (get-in (op! rt "add" "Drifted theme" "--type" "epic") [:card :id])
+            child-id (get-in (op! rt "add" "Queued child" "--epic" epic-id) [:card :id])]
+        (op! rt "finish" epic-id "--outcome" "abandoned")
+        ;; corrupt the child marker the abandon recorded, to an unknown lane
+        (weaver/update! rt child-id {:attributes {:kanban/abandon-restore-lane "bogus"}})
+        (testing "reopen fails loudly on the invalid marker, naming the card and allowed lanes"
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"invalid abandon-restore-lane marker"
+                                (op! rt "reopen" epic-id))))
+        (testing "the pre-flight guard runs before any mutation, so nothing is half-reopened"
+          (let [epic (weaver/show rt epic-id)
+                child (weaver/show rt child-id)]
+            (is (= "closed" (:state epic)))
+            (is (= "abandoned" (get-in epic [:attributes :kanban/outcome])))
+            (is (= "closed" (:state child)))
+            (is (= "abandoned" (get-in child [:attributes :kanban/outcome])))))))))
+
 (deftest kanban-feature-finish-stays-lane-gated
   (with-kanban
     (fn [rt]
