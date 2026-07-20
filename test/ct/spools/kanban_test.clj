@@ -169,7 +169,7 @@
               alias (op! rt "help")
               verbs (mapv :name (get-in detail [:arg-spec :subcommands]))]
           (is (= detail alias))
-          (is (= ["about" "add" "board" "card" "claim" "finish" "next" "note" "prime" "priority" "promote" "review" "rework" "task"] verbs))
+          (is (= ["about" "add" "board" "card" "claim" "finish" "next" "note" "prime" "priority" "promote" "reopen" "review" "rework" "task"] verbs))
           (is (some #(= "about" (:name %)) (get-in alias [:arg-spec :subcommands])))))
       (testing "missing and unknown verbs fail during parser routing with available names"
         (let [missing (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Missing subcommand"
@@ -178,7 +178,7 @@
                                             (op! rt "bogus")))]
           (is (= :missing-subcommand (:reason (ex-data missing))))
           (is (= :unknown-subcommand (:reason (ex-data unknown))))
-          (is (= ["about" "add" "board" "card" "claim" "finish" "next" "note" "prime" "priority" "promote" "review" "rework" "task"]
+          (is (= ["about" "add" "board" "card" "claim" "finish" "next" "note" "prime" "priority" "promote" "reopen" "review" "rework" "task"]
                  (:available-subcommands (ex-data missing))))
           (is (= (:available-subcommands (ex-data missing))
                  (:available-subcommands (ex-data unknown)))))))))
@@ -270,9 +270,9 @@
             (is (= ["p1" "p3" "p4"] (mapv :priority pending)))))
         (testing "cards that predate priorities read as p3"
           (let [legacy (weaver/add! rt {:title "Legacy card"
-                                       :attributes {:kanban/card "true"
-                                                    :kanban/lane "pending"
-                                                    :kanban/type "feature"}})
+                                        :attributes {:kanban/card "true"
+                                                     :kanban/lane "pending"
+                                                     :kanban/type "feature"}})
                 on-board (some #(when (= (:id legacy) (:id %)) %)
                                (:pending (op! rt "board")))]
             (is (= "p3" (:priority on-board)))))
@@ -310,20 +310,157 @@
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not an epic"
                                 (op! rt "add" "Bad parent" "--epic" feat-id))))))))
 
+(defn- no-blank-string-attrs?
+  "Return true when a stored strand carries no attribute set to the empty string.
+
+  Absence is always the trusted nil patch (attr cleared), never a typed \"\";
+  this guards the epic lifecycle against writing a blank string to mean absence."
+  [strand]
+  (not-any? #(= "" %) (vals (:attributes strand))))
+
+(deftest kanban-epic-complete-closes-only-when-children-are-closed
+  (with-kanban
+    (fn [rt]
+      (let [epic-id (get-in (op! rt "add" "Shippable theme" "--type" "epic") [:card :id])
+            a-id (get-in (op! rt "add" "Slice A" "--epic" epic-id) [:card :id])
+            b-id (get-in (op! rt "add" "Slice B" "--epic" epic-id) [:card :id])]
+        (op! rt "claim" a-id "--owner" "agent" "--branch" "slice-a")
+        (testing "an open feature child blocks completion and is named with its lane"
+          (let [ex (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                                         #"cannot be completed while feature children are open"
+                                         (op! rt "finish" epic-id "--outcome" "done")))
+                open (:open-children (ex-data ex))]
+            (is (= epic-id (:id (ex-data ex))))
+            (is (= #{{:id a-id :lane "claimed"} {:id b-id :lane "pending"}} (set open)))))
+        (op! rt "finish" a-id)
+        (op! rt "claim" b-id "--owner" "agent" "--branch" "slice-b")
+        (op! rt "finish" b-id)
+        (testing "with every feature child closed the epic completes as done"
+          (let [finished (op! rt "finish" epic-id "--outcome" "done")
+                stored (weaver/show rt epic-id)]
+            (is (= "closed" (get-in finished [:card :state])))
+            (is (= "done" (get-in finished [:card :attributes :kanban/outcome])))
+            (is (nil? (get-in finished [:card :attributes :kanban/lane]))
+                "lane is cleared to absence, not a blank string")
+            (is (nil? (get-in stored [:attributes :kanban/abandon-restore-lane]))
+                "a completed epic records no restore marker")
+            (is (no-blank-string-attrs? stored))))))))
+
+(deftest kanban-epic-abandon-cascades-reversibly-and-reopen-inverts
+  (with-kanban
+    (fn [rt]
+      (let [epic-id (get-in (op! rt "add" "Abandoned theme" "--type" "epic") [:card :id])
+            done-id (get-in (op! rt "add" "Already done" "--epic" epic-id) [:card :id])
+            pending-id (get-in (op! rt "add" "Still queued" "--epic" epic-id) [:card :id])
+            claimed-id (get-in (op! rt "add" "In flight" "--epic" epic-id) [:card :id])]
+        ;; one child is finished (done) before the abandon; two are still open
+        (op! rt "claim" done-id "--owner" "agent" "--branch" "done-branch")
+        (op! rt "finish" done-id)
+        (op! rt "claim" claimed-id "--owner" "agent" "--branch" "flight-branch")
+        (testing "abandon cascade-closes only the still-open children, each marked with its lane"
+          (let [abandoned (op! rt "finish" epic-id "--outcome" "abandoned")
+                epic (weaver/show rt epic-id)
+                done (weaver/show rt done-id)
+                pending (weaver/show rt pending-id)
+                claimed (weaver/show rt claimed-id)]
+            (is (= #{pending-id claimed-id} (set (:cascaded abandoned))))
+            (testing "the epic closes abandoned with its own pre-abandon lane recorded"
+              (is (= "closed" (:state epic)))
+              (is (= "abandoned" (get-in epic [:attributes :kanban/outcome])))
+              (is (= "pending" (get-in epic [:attributes :kanban/abandon-restore-lane])))
+              (is (nil? (get-in epic [:attributes :kanban/lane]))))
+            (testing "each cascaded child closes abandoned with its own restore lane"
+              (is (= "closed" (:state pending)))
+              (is (= "abandoned" (get-in pending [:attributes :kanban/outcome])))
+              (is (= "pending" (get-in pending [:attributes :kanban/abandon-restore-lane])))
+              (is (nil? (get-in pending [:attributes :kanban/lane])))
+              (is (= "closed" (:state claimed)))
+              (is (= "abandoned" (get-in claimed [:attributes :kanban/outcome])))
+              (is (= "claimed" (get-in claimed [:attributes :kanban/abandon-restore-lane]))))
+            (testing "an already-closed child is left untouched and carries no marker"
+              (is (= "closed" (:state done)))
+              (is (= "done" (get-in done [:attributes :kanban/outcome])))
+              (is (nil? (get-in done [:attributes :kanban/abandon-restore-lane]))))
+            (is (every? no-blank-string-attrs? [epic done pending claimed]))))
+        (testing "reopen inverts exactly what the abandon closed"
+          (let [reopened (op! rt "reopen" epic-id)
+                epic (weaver/show rt epic-id)
+                done (weaver/show rt done-id)
+                pending (weaver/show rt pending-id)
+                claimed (weaver/show rt claimed-id)]
+            (is (= #{pending-id claimed-id} (set (:cascaded reopened))))
+            (testing "the epic returns to its restore lane, outcome and marker cleared"
+              (is (= "active" (:state epic)))
+              (is (= "pending" (get-in epic [:attributes :kanban/lane])))
+              (is (nil? (get-in epic [:attributes :kanban/outcome])))
+              (is (nil? (get-in epic [:attributes :kanban/abandon-restore-lane]))))
+            (testing "cascade-marked children return to their own restore lanes, cleared"
+              (is (= "active" (:state pending)))
+              (is (= "pending" (get-in pending [:attributes :kanban/lane])))
+              (is (nil? (get-in pending [:attributes :kanban/outcome])))
+              (is (nil? (get-in pending [:attributes :kanban/abandon-restore-lane])))
+              (is (= "active" (:state claimed)))
+              (is (= "claimed" (get-in claimed [:attributes :kanban/lane])))
+              (is (nil? (get-in claimed [:attributes :kanban/abandon-restore-lane]))))
+            (testing "the pre-done child was never abandoned, so reopen leaves it closed/done"
+              (is (= "closed" (:state done)))
+              (is (= "done" (get-in done [:attributes :kanban/outcome]))))
+            (is (every? no-blank-string-attrs? [epic done pending claimed]))))))))
+
+(deftest kanban-epic-finish-and-reopen-guard-loudly
+  (with-kanban
+    (fn [rt]
+      (let [epic-id (get-in (op! rt "add" "Guarded theme" "--type" "epic") [:card :id])
+            feature-id (get-in (op! rt "add" "Lone feature") [:card :id])]
+        (testing "an epic finish outcome outside done/abandoned fails loudly"
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"outcome must be done or abandoned"
+                                (op! rt "finish" epic-id "--outcome" "shipped"))))
+        (testing "an epic outside refinement/pending cannot finish"
+          (weaver/update! rt epic-id {:attributes {:kanban/lane "claimed"}})
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"refinement or pending lane to finish"
+                                (op! rt "finish" epic-id "--outcome" "abandoned")))
+          (weaver/update! rt epic-id {:attributes {:kanban/lane "pending"}}))
+        (testing "reopen refuses a non-epic card"
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not an epic"
+                                (op! rt "reopen" feature-id))))
+        (testing "reopen refuses an active (never abandoned) epic"
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"must be closed to reopen"
+                                (op! rt "reopen" epic-id))))
+        (testing "reopen refuses a completed (done) epic — it pairs with abandon only"
+          (op! rt "finish" epic-id "--outcome" "done")
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"reverses an abandoned epic only"
+                                (op! rt "reopen" epic-id))))))))
+
+(deftest kanban-feature-finish-stays-lane-gated
+  (with-kanban
+    (fn [rt]
+      (let [id (get-in (op! rt "add" "Feature card") [:card :id])]
+        (testing "a pending feature still cannot finish — the feature path is unchanged"
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"must be claimed or in_review to finish"
+                                (op! rt "finish" id))))
+        (testing "an arbitrary outcome is preserved on the feature path"
+          (op! rt "claim" id "--owner" "agent" "--branch" "feature-branch")
+          (let [finished (op! rt "finish" id "--outcome" "superseded")
+                stored (weaver/show rt id)]
+            (is (= "closed" (get-in finished [:card :state])))
+            (is (= "superseded" (get-in finished [:card :attributes :kanban/outcome])))
+            (is (nil? (get-in stored [:attributes :kanban/lane])))
+            (is (no-blank-string-attrs? stored))))))))
+
 (deftest kanban-type-defaults-to-feature-but-drift-fails-loudly
   (with-kanban
     (fn [rt]
       (testing "a card that predates kanban/type reads as a feature"
         (let [legacy (weaver/add! rt {:title "Typeless card"
-                                     :attributes {:kanban/card "true"
-                                                  :kanban/lane "pending"}})]
+                                      :attributes {:kanban/card "true"
+                                                   :kanban/lane "pending"}})]
           (is (= (:id legacy) (get-in (op! rt "next") [:next :id])))
           (is (= "feature" (:type (first (:pending (op! rt "board"))))))))
       (testing "a kanban/type outside feature/epic is drift, not a feature"
         (let [drifted (weaver/add! rt {:title "Story card"
-                                      :attributes {:kanban/card "true"
-                                                   :kanban/lane "pending"
-                                                   :kanban/type "story"}})
+                                       :attributes {:kanban/card "true"
+                                                    :kanban/lane "pending"
+                                                    :kanban/type "story"}})
               ex (is (thrown-with-msg? clojure.lang.ExceptionInfo
                                        #"kanban/type must be feature or epic"
                                        (op! rt "board")))]
@@ -339,7 +476,7 @@
         (let [task (weaver/add! rt {:title "Implement it" :attributes {:kind "task"}})
               review (weaver/add! rt {:title "Review it" :attributes {:kind "review"}})]
           (weaver/update! rt card-id {:edges [{:type "parent-of" :to (:id task)}
-                                             {:type "parent-of" :to (:id review)}]})
+                                              {:type "parent-of" :to (:id review)}]})
           (weaver/update! rt (:id review) {:edges [{:type "depends-on" :to (:id task)}]})
           (op! rt "note" card-id "Decided to keep lane names" "--by" "agent-a")
           (op! rt "note" card-id
@@ -461,12 +598,12 @@
         (testing "needs-review is always present and empty before any review work"
           (is (= [] (:needs-review (op! rt "board")))))
         (let [ready-review (weaver/add! rt {:title "Review ready"
-                                           :attributes {:workflow/checkpoint-kind "human"}})
+                                            :attributes {:workflow/checkpoint-kind "human"}})
               impl (weaver/add! rt {:title "Implement" :attributes {:kind "task"}})
               blocked-review (weaver/add! rt {:title "Review blocked" :attributes {:kind "review"}})]
           (weaver/update! rt card-id {:edges [{:type "parent-of" :to (:id ready-review)}
-                                             {:type "parent-of" :to (:id impl)}
-                                             {:type "parent-of" :to (:id blocked-review)}]})
+                                              {:type "parent-of" :to (:id impl)}
+                                              {:type "parent-of" :to (:id blocked-review)}]})
           ;; blocked-review depends on impl, so it stays out of the ready frontier
           (weaver/update! rt (:id blocked-review) {:edges [{:type "depends-on" :to (:id impl)}]})
           (testing "needs-review surfaces only ready review children with the card branch"
@@ -726,10 +863,10 @@
   (with-kanban
     (fn [rt]
       (let [card (weaver/add! rt {:title "Malformed run card"
-                                 :attributes {:kanban/card "true"
-                                              :kanban/lane "claimed"
-                                              :kanban/type "feature"
-                                              :kanban/run-id ""}})]
+                                  :attributes {:kanban/card "true"
+                                               :kanban/lane "claimed"
+                                               :kanban/type "feature"
+                                               :kanban/run-id ""}})]
         (is (thrown-with-msg? clojure.lang.ExceptionInfo
                               #"Tracker view does not match its owning spec"
                               (op! rt "card" (:id card))))))))
@@ -805,7 +942,7 @@
             child (weaver/add! rt {:title "Child work" :attributes {:kind "task"}})
             dep (weaver/add! rt {:title "Dependency" :attributes {:kind "task"}})]
         (weaver/update! rt root-id {:edges [{:type "parent-of" :to (:id child)}
-                                           {:type "parent-of" :to (:id dep)}]})
+                                            {:type "parent-of" :to (:id dep)}]})
         (weaver/update! rt (:id child) {:edges [{:type "depends-on" :to (:id dep)}]})
         (weaver/update! rt (:id dep) {:state "closed"})
         (let [result (export! rt root-id)

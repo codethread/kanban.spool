@@ -37,9 +37,11 @@
 (def ^:private note-kind-attr :note/kind)
 (def ^:private task-attr :kanban/task)
 (def ^:private run-id-attr :kanban/run-id)
+(def ^:private restore-lane-attr :kanban/abandon-restore-lane)
 
 (def ^:private addable-lanes #{"pending" "refinement"})
 (def ^:private active-lanes #{"refinement" "pending" "claimed" "in_review"})
+(def ^:private epic-finish-lanes #{"refinement" "pending"})
 (def ^:private card-types #{"feature" "epic"})
 (def ^:private card-priorities #{"p1" "p2" "p3" "p4"})
 (def ^:private default-priority "p3")
@@ -174,7 +176,7 @@
       (throw (ex-info "kanban epics cannot nest under other epics" {:epic epic-id})))
     (let [epic (some-> epic-id epic-strand)
           strand (weaver/add! rt {:title title
-                                 :attributes (card-attributes flags)})]
+                                  :attributes (card-attributes flags)})]
       (when epic
         (weaver/update! rt (:id epic) {:edges [{:type "parent-of" :to (:id strand)}]}))
       (cond-> {:operation "kanban add"
@@ -269,9 +271,9 @@
   strand, so callers still see every attribute in the result."
   [strand attrs state]
   (weaver/update! (current/runtime)
-                 (:id strand)
-                 (cond-> {:attributes attrs}
-                   state (assoc :state state))))
+                  (:id strand)
+                  (cond-> {:attributes attrs}
+                    state (assoc :state state))))
 
 (defn promote!
   "Move a refinement card into the pending lane (an explicit human act)."
@@ -340,20 +342,151 @@
     {:operation "kanban rework"
      :card (entity-projection updated)}))
 
+(defn- direct-feature-children
+  "Return an epic's direct `parent-of` children that are feature cards, sorted by id.
+
+  One batched edge lookup and one batched strand read, mirroring `feature-tasks`.
+  Non-card children (tasks, notes, execution strands) and epic children are
+  filtered out; a child card whose `kanban/type` is drift fails loudly via
+  `card-type` rather than being silently skipped."
+  [rt epic]
+  (let [child-ids (mapv :to_strand_id (graph/outgoing-edges rt [(:id epic)] "parent-of"))]
+    (->> (graph/strands-by-ids rt child-ids)
+         (filter #(and (= "true" (attr-value % card-attr))
+                       (= "feature" (card-type %))))
+         (sort-by :id)
+         vec)))
+
+(defn- finish-feature!
+  "Close a claimed or in_review feature card with an explicit outcome."
+  [id strand outcome]
+  (when-not (contains? #{"claimed" "in_review"} (attr-value strand lane-attr))
+    (throw (ex-info "Kanban card must be claimed or in_review to finish"
+                    {:id id :lane (attr-value strand lane-attr)})))
+  (let [updated (update-card! strand {lane-attr nil outcome-attr outcome} "closed")]
+    {:operation "kanban finish"
+     :card (entity-projection updated)}))
+
+(defn- complete-epic!
+  "Close an epic as done, guarding that every direct feature child is closed.
+
+  An open feature child fails loudly, naming every offending child and its lane —
+  a done epic asserts its features are finished, so it never silently closes over
+  live work."
+  [rt id strand]
+  (let [open (filterv #(not= "closed" (:state %)) (direct-feature-children rt strand))]
+    (when (seq open)
+      (throw (ex-info "Kanban epic cannot be completed while feature children are open"
+                      {:id id
+                       :open-children (mapv (fn [child]
+                                              {:id (:id child)
+                                               :lane (attr-value child lane-attr)})
+                                            open)})))
+    (let [updated (update-card! strand {lane-attr nil outcome-attr "done"} "closed")]
+      {:operation "kanban finish"
+       :card (entity-projection updated)})))
+
+(defn- abandon-epic!
+  "Abandon an epic and cascade-close its still-open feature children.
+
+  Each feature child not already closed records its current lane in
+  `kanban/abandon-restore-lane` before closing (outcome `abandoned`, lane
+  cleared), so `reopen` can restore exactly what this abandon closed. Children
+  already closed before the cascade are finished work: they are left untouched
+  and carry no marker. The epic records its own pre-abandon lane the same way."
+  [rt strand]
+  (let [cascaded (filterv #(not= "closed" (:state %)) (direct-feature-children rt strand))]
+    (doseq [child cascaded]
+      (update-card! child
+                    {restore-lane-attr (attr-value child lane-attr)
+                     lane-attr nil
+                     outcome-attr "abandoned"}
+                    "closed"))
+    (let [updated (update-card! strand
+                                {restore-lane-attr (attr-value strand lane-attr)
+                                 lane-attr nil
+                                 outcome-attr "abandoned"}
+                                "closed")]
+      {:operation "kanban finish"
+       :card (entity-projection updated)
+       :cascaded (mapv :id cascaded)})))
+
+(defn- finish-epic!
+  "Close a grouping epic from the refinement or pending lane.
+
+  Epics are never claimed, so they finish from a queue lane, not the work lanes.
+  `--outcome done` completes (every feature child must be closed); `--outcome
+  abandoned` cascades a reversible close over the still-open children. Any other
+  outcome fails loudly."
+  [rt id strand outcome]
+  (when-not (contains? epic-finish-lanes (attr-value strand lane-attr))
+    (throw (ex-info "Kanban epic must be in the refinement or pending lane to finish"
+                    {:id id :lane (attr-value strand lane-attr) :allowed (sort epic-finish-lanes)})))
+  (case outcome
+    "done" (complete-epic! rt id strand)
+    "abandoned" (abandon-epic! rt strand)
+    (throw (ex-info "Kanban epic finish --outcome must be done or abandoned"
+                    {:id id :outcome outcome :allowed ["abandoned" "done"]}))))
+
 (defn finish!
-  "Close a claimed or in_review kanban card with an explicit outcome."
+  "Close a kanban card with an explicit outcome, polymorphic on `kanban/type`.
+
+  A feature card closes from the claimed or in_review lane (`--outcome` defaults
+  to done). A grouping epic is never claimed, so it closes from the refinement or
+  pending lane: `--outcome done` completes it (guarding every direct feature
+  child is closed) and `--outcome abandoned` cascade-closes each still-open
+  feature child, recording each transitioned card's lane in
+  `kanban/abandon-restore-lane` so `kanban reopen` can reverse exactly what the
+  abandon closed."
   [id flags]
   (let [id (require-non-blank! :id id)
+        rt (current/runtime)
         strand (card-strand id)
         outcome (or (get flags "--outcome") "done")]
     (when-not (= "active" (:state strand))
       (throw (ex-info "Kanban card must be active to finish" {:id id :state (:state strand)})))
-    (when-not (contains? #{"claimed" "in_review"} (attr-value strand lane-attr))
-      (throw (ex-info "Kanban card must be claimed or in_review to finish"
-                      {:id id :lane (attr-value strand lane-attr)})))
-    (let [updated (update-card! strand {lane-attr nil outcome-attr outcome} "closed")]
-      {:operation "kanban finish"
-       :card (entity-projection updated)})))
+    (if (= "epic" (card-type strand))
+      (finish-epic! rt id strand outcome)
+      (finish-feature! id strand outcome))))
+
+(defn reopen!
+  "Reopen an abandoned epic, reversing exactly the cascade a matching abandon closed.
+
+  The inverse of abandon only: the epic must be a closed epic with
+  `kanban/outcome=abandoned`; a done epic (or any non-abandoned card) is refused,
+  because reopen pairs with abandon, not complete. The epic returns to its stored
+  `kanban/abandon-restore-lane` (state active, outcome and marker cleared). Each
+  direct feature child that is closed *and* carries the marker is reopened to its
+  own stored restore lane; a child closed before the abandon (no marker) was
+  legitimately done and stays closed. Reopen is a true inverse, never a blanket
+  reopen."
+  [id]
+  (let [id (require-non-blank! :id id)
+        rt (current/runtime)
+        strand (epic-strand id)]
+    (when-not (= "closed" (:state strand))
+      (throw (ex-info "Kanban epic must be closed to reopen" {:id id :state (:state strand)})))
+    (when-not (= "abandoned" (attr-value strand outcome-attr))
+      (throw (ex-info "Kanban reopen reverses an abandoned epic only"
+                      {:id id :outcome (attr-value strand outcome-attr)})))
+    (let [restore-lane (attr-value strand restore-lane-attr)
+          cascaded (filterv #(and (= "closed" (:state %))
+                                  (some? (attr-value % restore-lane-attr)))
+                            (direct-feature-children rt strand))]
+      (doseq [child cascaded]
+        (update-card! child
+                      {lane-attr (attr-value child restore-lane-attr)
+                       outcome-attr nil
+                       restore-lane-attr nil}
+                      "active"))
+      (let [updated (update-card! strand
+                                  {lane-attr restore-lane
+                                   outcome-attr nil
+                                   restore-lane-attr nil}
+                                  "active")]
+        {:operation "kanban reopen"
+         :card (entity-projection updated)
+         :cascaded (mapv :id cascaded)}))))
 
 ;; ---------------------------------------------------------------------------
 ;; note compaction: shared by the notes, task, and card projections
@@ -481,9 +614,9 @@
         rt (current/runtime)
         deps (get flags "--depends-on")
         task (weaver/add! rt {:title title
-                             :attributes (cond-> {task-attr "true"
-                                                  :kind "task"}
-                                           (get flags "--body") (assoc :body (get flags "--body")))})]
+                              :attributes (cond-> {task-attr "true"
+                                                   :kind "task"}
+                                            (get flags "--body") (assoc :body (get flags "--body")))})]
     (weaver/update! rt (:id feature) {:edges [{:type "parent-of" :to (:id task)}]})
     (when (seq deps)
       (weaver/update! rt (:id task) {:edges (mapv (fn [dep] {:type "depends-on" :to dep}) deps)}))
@@ -1052,7 +1185,8 @@
    :attributes {card-attr "true"
                 type-attr "feature (default) | epic (grouping; parent-of its features)"
                 lane-attr "refinement|pending|claimed|in_review (active cards only)"
-                outcome-attr "explicit finish outcome on closed cards"
+                outcome-attr "explicit finish outcome on closed cards (done|abandoned)"
+                restore-lane-attr "reversibility marker: lane an abandon cascade closed a card from, so `kanban reopen` restores exactly what it closed"
                 priority-attr "p1|p2|p3|p4 (default p3); orders lanes and `kanban next`"
                 task-attr "true on task strands (parent-of children of a feature card; status derived)"
                 run-id-attr "optional tracker run-id; `kanban card` joins the bound tracker's status and ready steps"
@@ -1095,7 +1229,8 @@
               {:verb "task" :purpose "Add or list a feature card's tasks with their derived statuses."}
               {:verb "review" :purpose "Move a claimed card into in_review."}
               {:verb "rework" :purpose "Move an in_review card back to claimed."}
-              {:verb "finish" :purpose "Close a card with an explicit outcome."}
+              {:verb "finish" :purpose "Close a card with an explicit outcome (feature from claimed/in_review; epic from refinement/pending — done requires closed children, abandoned cascades reversibly)."}
+              {:verb "reopen" :purpose "Reopen an abandoned epic, reversing exactly the cascade the matching abandon closed."}
               {:repl "ct.spools.kanban/print-board!" :purpose "ASCII board from mill weaver repl; CLI output stays JSON-only."}]
    :patterns [{:name "kanban-batch"
                :input {:items [{:key "slug"
@@ -1240,9 +1375,11 @@
               :positionals [{:name :id :required? true :doc "Kanban card id."}]}
     "rework" {:doc "Move an in_review card back to claimed for rework."
               :positionals [{:name :id :required? true :doc "Kanban card id."}]}
-    "finish" {:doc "Close a claimed or in_review kanban card with an explicit outcome."
-              :flags {:outcome {:doc "Closed outcome; defaults to done."}}
-              :positionals [{:name :id :required? true :doc "Kanban card id."}]}}})
+    "finish" {:doc "Close a card with an explicit outcome. Features close from claimed/in_review; epics close from refinement/pending (done requires closed feature children, abandoned cascades reversibly)."
+              :flags {:outcome {:doc "Closed outcome; defaults to done. For an epic: done|abandoned."}}
+              :positionals [{:name :id :required? true :doc "Kanban card id."}]}
+    "reopen" {:doc "Reopen an abandoned epic, reversing exactly the cascade the matching abandon closed."
+              :positionals [{:name :id :required? true :doc "Abandoned epic card id."}]}}})
 
 (defn- legacy-flags
   "Return parsed keyword flags in the string-keyed shape expected by handlers."
@@ -1273,7 +1410,8 @@
       "review" (review! (:id args))
       "rework" (rework! (:id args))
       "note" (note! (:id args) (str/join " " (:text args)) flags)
-      "finish" (finish! (:id args) flags))))
+      "finish" (finish! (:id args) flags)
+      "reopen" (reopen! (:id args)))))
 
 ;; ---------------------------------------------------------------------------
 ;; kanban-export: a card's full parent-of subtree for offline rendering
@@ -1362,7 +1500,7 @@
                                 :owner :skein/spools-kanban
                                 :keys ["kanban/card" "kanban/lane" "kanban/outcome" "kanban/type"
                                        "kanban/priority" "kanban/source" "kanban/task"
-                                       "kanban/run-id" "kanban/from"]
+                                       "kanban/run-id" "kanban/from" "kanban/abandon-restore-lane"]
                                 :doc "Kanban card state attributes written by ct.spools.kanban/add!."})
      :ops [(weaver/register-op! rt 'kanban
                                 {:doc "Manage the user-facing kanban work board. Run `strand kanban about` for the convention manual."

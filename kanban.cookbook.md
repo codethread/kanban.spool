@@ -176,6 +176,74 @@ Honest source: `add!`'s `--type`/`--epic` handling and `kanban-epics-group-featu
 
 ---
 
+## Recipe: Finish an epic — complete it, or abandon and reopen
+
+**Situation.** An epic has run its course. Either its features all landed and you want to close the grouping cleanly (**complete**), or the whole initiative is being dropped and you want to close it *and* its in-flight features in one act — while keeping the option to bring it all back if the decision reverses (**abandon**, then **reopen**).
+
+**Composition.** `finish` is polymorphic: on an epic it closes from the `refinement`/`pending` lane (epics are never claimed). `--outcome done` completes; `--outcome abandoned` cascades reversibly; `reopen` inverts a matching abandon.
+
+```sh
+epic=$(strand kanban add "Board rewrite" --type epic | jq -r '.card.id')
+a=$(strand kanban add "Design the lanes"  --epic "$epic" | jq -r '.card.id')
+b=$(strand kanban add "Port the old cards" --epic "$epic" | jq -r '.card.id')
+
+# --- Complete path: every feature child must be closed first. ---
+strand kanban claim "$a" --owner claude --branch rewrite-a && strand kanban finish "$a"
+strand kanban claim "$b" --owner claude --branch rewrite-b && strand kanban finish "$b"
+strand kanban finish "$epic" --outcome done
+# => epic closed, kanban/outcome=done, lane absent. An open child would fail loudly,
+#    naming the child and its lane instead.
+
+# --- Abandon path: allowed with children still open; the cascade is reversible. ---
+epic2=$(strand kanban add "Speculative theme" --type epic | jq -r '.card.id')
+done=$(strand kanban add "Already shipped" --epic "$epic2" | jq -r '.card.id')
+open=$(strand kanban add "Half-built"      --epic "$epic2" | jq -r '.card.id')
+strand kanban claim "$done" --owner claude --branch shipped && strand kanban finish "$done"
+
+strand kanban finish "$epic2" --outcome abandoned
+# => "$open" closes abandoned with kanban/abandon-restore-lane=pending; "$done" (already
+#    closed) is untouched and keeps outcome=done, no marker; the epic closes abandoned
+#    with its own pre-abandon lane recorded.
+
+# Changed your mind: reopen inverts exactly what the abandon closed.
+strand kanban reopen "$epic2"
+# => epic active at its restore lane; "$open" active again at pending; "$done" stays
+#    closed/done (it was never abandoned, so it carries no marker).
+```
+
+**Why this shape.**
+
+- **`finish` stays one verb, epics get a lane-appropriate path.** A feature closes
+  from the work lanes it actually travels (`claimed`/`in_review`); an epic never
+  enters those, so it closes from the queue lanes it *does* sit in
+  (`refinement`/`pending`). One reviewed verb, two honest gates — no epic-only
+  verb family to learn (contract [Finishing an epic](./kanban.md#finishing-an-epic);
+  `kanban-epic-complete-closes-only-when-children-are-closed`).
+- **Complete asserts its children are done.** `--outcome done` refuses while any
+  direct feature child is open and names the offenders, so a "completed" epic is a
+  real claim about its features, never a lie that closes over live work
+  (`complete-epic!`; same test).
+- **Abandon is reversible by construction.** The cascade records, on each child it
+  transitions, exactly the one fact needed to undo itself — the lane it closed the
+  card from (`kanban/abandon-restore-lane`). A child that was already closed is
+  finished work: it is left untouched and unmarked, so reopen can tell "closed by
+  this abandon" from "legitimately done before it"
+  (`abandon-epic!`; `kanban-epic-abandon-cascades-reversibly-and-reopen-inverts`).
+- **Reopen is a true inverse, not a blanket reopen.** It pairs with abandon only —
+  a `done` epic is refused — and reverses *only* the marked cards, restoring each
+  to its own stored lane. The pre-done feature stays closed. That is why abandoning
+  and reopening round-trips the board to exactly where it was
+  (`reopen!`; same test).
+- **Absence is always the trusted nil patch.** Every cleared lane, outcome, and
+  marker goes *absent* (the same `update-card!` nil patch `finish` has always
+  used), never a blank string standing in for absence — so a reopened card reads
+  as genuinely unset, not empty (`kanban-epic-*` tests assert no attribute is ever
+  `""`).
+
+Honest source: the polymorphic `finish!`, `complete-epic!`/`abandon-epic!`/`reopen!` in the spool source, the contract [Finishing an epic](./kanban.md#finishing-an-epic) section, and the epic-lifecycle tests in `kanban_test.clj`.
+
+---
+
 ## Recipe: Hang execution strands under a card
 
 **Situation.** The user's request is approved and it's real work — a task DAG of execution strands. You don't want two competing trackers fighting over the same feature.

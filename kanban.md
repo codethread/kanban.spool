@@ -34,7 +34,8 @@ Card state lives under the `kanban/*` attribute topic:
 | `kanban/card` | String `"true"` for card strands. |
 | `kanban/type` | `feature` (default: cards without the attribute read as features) or `epic` (grouping card; `parent-of` its features). Any other value is drift and fails loudly. |
 | `kanban/lane` | Active lane: `refinement`, `pending`, `claimed`, or `in_review`. Removed on finish. |
-| `kanban/outcome` | Explicit finish result on a closed card, such as `done` or `abandoned`. |
+| `kanban/outcome` | Explicit finish result on a closed card. Features record any outcome (default `done`); epics record `done` (completed) or `abandoned`. |
+| `kanban/abandon-restore-lane` | Reversibility marker written only by an epic **abandon** cascade: the lane a card was closed *from*. `kanban reopen` restores each marked card to it and clears the marker, so reopen reverses exactly what the abandon closed. |
 | `kanban/priority` | `p1`, `p2`, `p3` (default), or `p4`; cards without the attribute read as `p3`. |
 | `kanban/source` | Optional path or URL for design context (RFC, feature folder). |
 | `kanban/task` | `"true"` on task strands: `parent-of` children of a feature card whose status is derived, never stored. |
@@ -49,6 +50,17 @@ The card is the **work root**: execution strands hang under it with `parent-of` 
 **Relating work.** Relate cards or tasks to each other with `depends-on` edges (`strand update <a> --edge depends-on:<b>`); agents check the `:related` list in `kanban card <id>` when claiming or resuming so blockers and dependents surface without extra queries.
 
 **Viewing work in a branch.** `strand branches "$(git branch --show-current)"` shows the feature cards and their substrands stamped on the current branch.
+
+### Finishing an epic
+
+`finish` is polymorphic on `kanban/type`. A **feature** closes from the `claimed` or `in_review` lane, as always. An **epic** is grouping-only — it is never claimed — so it closes from the `refinement` or `pending` lane instead; any other epic lane or state fails loudly. An epic takes exactly two outcomes:
+
+- **`finish <epic> --outcome done`** (complete) — guards that every direct feature child is `closed`; otherwise it fails loudly, naming each open child and its lane. A completed epic is `closed` with `kanban/outcome=done` and no restore marker.
+- **`finish <epic> --outcome abandoned`** (abandon) — allowed regardless of child states, and **cascades**: every direct feature child not already `closed` records its current lane in `kanban/abandon-restore-lane`, then closes (`kanban/outcome=abandoned`, lane cleared). A child that was *already* `closed` is finished work — it is left untouched and gets no marker. The epic records its own pre-abandon lane the same way before closing abandoned.
+
+**`reopen <epic>`** is the inverse of **abandon only**. It requires a `closed` epic with `kanban/outcome=abandoned` — a completed (`done`) epic, or any non-abandoned card, is refused. Reopen returns the epic to its stored `kanban/abandon-restore-lane` (state `active`, outcome and marker cleared), then reverses the cascade: every direct feature child that is `closed` **and** carries the marker is reopened to its own stored restore lane and cleared. A child that was legitimately `done` before the abandon carries no marker and stays closed. Reopen is a true inverse — it reopens exactly what a matching abandon closed, never a blanket reopen.
+
+Every attribute clear above is the trusted nil patch (the attribute goes absent) — a cleared lane, outcome, or marker is never a blank string.
 
 ## Task tier
 
@@ -118,11 +130,12 @@ strand kanban task list <feature>
 strand kanban review <id>
 strand kanban rework <id>
 strand kanban finish <id> [--outcome done|abandoned]
+strand kanban reopen <epic-id>
 ```
 
 `prime` is the agent onboarding surface: a superset of `about` that adds the working discipline (work under a claimed card, the pick-up-next flow, the note-as-you-go/resume-from-task contract, adjacent-work awareness, and branch visibility) so repo agent docs point at it instead of duplicating conventions that then drift from the spool. `about` stays the terse command manual.
 
-`board` returns the grouped snapshot (epics, refinement/pending/claimed/in_review lanes sorted p1-first then oldest, closed count); active cards with a lane outside the known set surface in `unknown-lane` rather than being hidden. It also returns `needs-review`: a vector aggregated across claimed and in-review feature cards of `{:card :item}` entries (plus `:branch` from the claim stamp), one per card descendant that is active, in the engine ready frontier, and marks human review (`hitl` true, `workflow/checkpoint-kind` `human`, or `kind` `review`), sorted by card id then item id — the always-present cross-card review queue. `next` returns the highest-priority (p1 first) oldest active pending feature (epics are never served). `priority` restamps an active card's `kanban/priority` and fails loudly on unknown values or closed cards. `promote` is the explicit human command that moves a refinement card into the pending lane. `claim` fails loudly without `--owner` and `--branch` and refuses epics; `--worktree` is optional for direct work in the main checkout. `review` moves a claimed card to `in_review`; `rework` moves it back to `claimed`; `finish` closes a claimed or in-review card with an explicit `kanban/outcome`.
+`board` returns the grouped snapshot (epics, refinement/pending/claimed/in_review lanes sorted p1-first then oldest, closed count); active cards with a lane outside the known set surface in `unknown-lane` rather than being hidden. It also returns `needs-review`: a vector aggregated across claimed and in-review feature cards of `{:card :item}` entries (plus `:branch` from the claim stamp), one per card descendant that is active, in the engine ready frontier, and marks human review (`hitl` true, `workflow/checkpoint-kind` `human`, or `kind` `review`), sorted by card id then item id — the always-present cross-card review queue. `next` returns the highest-priority (p1 first) oldest active pending feature (epics are never served). `priority` restamps an active card's `kanban/priority` and fails loudly on unknown values or closed cards. `promote` is the explicit human command that moves a refinement card into the pending lane. `claim` fails loudly without `--owner` and `--branch` and refuses epics; `--worktree` is optional for direct work in the main checkout. `review` moves a claimed card to `in_review`; `rework` moves it back to `claimed`; `finish` is polymorphic on `kanban/type` — it closes a claimed or in-review *feature* with an explicit `kanban/outcome`, and closes an *epic* from `refinement`/`pending` (`--outcome done` guards its feature children are closed, `--outcome abandoned` cascades a reversible close, recording `kanban/abandon-restore-lane`). `reopen` is the inverse of an epic abandon only — it restores an abandoned epic and the children that abandon closed to their stored lanes and refuses a done or non-abandoned card (see [Finishing an epic](#finishing-an-epic)).
 
 `card` returns the resume view (card, tasks with derived statuses and `latest-note`, compact card
 notes, active work, ready frontier) plus `related`: a vector of `{:relation :strand}` entries for
