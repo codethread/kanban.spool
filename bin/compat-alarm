@@ -33,7 +33,16 @@ for ns in $nss; do
   syms+="'$ns "
 done
 
-exec clojure -Sdeps "{:paths [${src_paths}${test_paths}]}" -M -e "
+# The frozen suite loads against io.skein/skein (and its transitive
+# clojure.data.json) plus the guild spool source — the deps the :test alias in
+# deps.edn supplies. compat-alarm can't just run -M:test because it swaps the
+# working tree's tests for the archived tag's, so it mirrors the :test alias's
+# sibling-checkout coordinates onto this base-only classpath.
+skein_root="../skein-src"
+guild_src="$skein_root/spools/guild/src"
+
+exec clojure -Sdeps "{:paths [${src_paths}${test_paths}\"$guild_src\"]
+                      :deps {io.skein/skein {:local/root \"$skein_root\"}}}" -M -e "
 (require 'clojure.test ${requires})
 (let [result (apply clojure.test/run-tests [${syms}])]
   (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1)))"
