@@ -165,12 +165,20 @@
   (with-kanban
     (fn [rt]
       (testing "help projections list the declared verb surface"
+        ;; `strand help kanban` projects the canonical help envelope; the verb
+        ;; surface lives under the op node's children (DELTA-Dtf-001.CC1/CC7)
         (let [detail (weaver/op! rt 'help ["kanban"])
-              alias (op! rt "help")
-              verbs (mapv :name (get-in detail [:arg-spec :subcommands]))]
-          (is (= detail alias))
+              children (get-in detail [:node :children])
+              verbs (mapv :name children)]
           (is (= ["about" "add" "board" "card" "claim" "finish" "next" "note" "prime" "priority" "promote" "reopen" "review" "rework" "task"] verbs))
-          (is (some #(= "about" (:name %)) (get-in alias [:arg-spec :subcommands])))))
+          (is (some #(= "about" (:name %)) children))))
+      (testing "the retired sole-token `kanban help` sugar redirects loudly to `strand help kanban`"
+        ;; DELTA-Dtf-001.CC5 / DELTA-Dtf-002.CC3 retired the `<op> help` whole-op
+        ;; alias; a bare `help` verb now fails with the loud help-grammar redirect
+        (let [redirect (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                                             #"Run `strand help kanban` instead"
+                                             (op! rt "help")))]
+          (is (= "discovery/help-grammar" (:code (ex-data redirect))))))
       (testing "missing and unknown verbs fail during parser routing with available names"
         (let [missing (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Missing subcommand"
                                             (op! rt)))
