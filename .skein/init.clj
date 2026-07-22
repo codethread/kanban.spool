@@ -3,28 +3,34 @@
 
 (def runtime (current/runtime))
 
-(runtime/sync! runtime)
-(runtime/use! runtime :skein/spools-batteries
+;; batteries ships on the classpath (:paths), not a synced spool root; require
+;; it so the module source load classifies it as classpath-owned.
+(require 'skein.spools.batteries)
+(runtime/module! runtime :skein/spools-batteries
   {:ns 'skein.spools.batteries
-   :call 'skein.spools.batteries/activate!})
+   :contribute 'skein.spools.batteries/contribute
+   :reconcile 'skein.spools.batteries/reconcile})
 
 ;; Board peering (kanban.md "Peering"): guild first, kanban second, peering
-;; last — install-peering! fails loudly unless both predecessors registered.
-(runtime/use! runtime :guild
+;; last — install-peering! fails loudly unless both predecessors reconciled.
+(runtime/module! runtime :guild
   {:ns 'skein.spools.guild
    :spools ['skein.spools/guild]
-   :call 'skein.spools.guild/install!
+   :contribute 'skein.spools.guild/contribute
+   :reconcile 'skein.spools.guild/reconcile
    :required? true})
 
-(runtime/use! runtime :kanban
+(runtime/module! runtime :kanban
   {:ns 'ct.spools.kanban
    :spools ['codethread/kanban]
-   :call 'ct.spools.kanban/install!
+   :after [:guild]
+   :contribute 'ct.spools.kanban/contribute
+   :reconcile 'ct.spools.kanban/reconcile
    :required? true})
 
-(runtime/use! runtime :kanban/peering
-  {:ns 'ct.spools.kanban
+(runtime/module! runtime :kanban/peering
+  {:file "peering_adapter.clj"
    :spools ['codethread/kanban 'skein.spools/guild]
    :after [:guild :kanban]
-   :call 'ct.spools.kanban/install-peering!
+   :reconcile 'peering-adapter/reconcile
    :required? true})
