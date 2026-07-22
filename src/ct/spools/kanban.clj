@@ -651,12 +651,12 @@
 
 (defn task-op
   "Dispatch a parsed `kanban task ...` action, failing loudly on an unknown one."
-  [{:keys [action feature title]} flags]
-  (case action
-    "add" (task-add! feature (str/join " " title) flags)
-    "list" (task-list feature)
+  [{:keys [feature title subcommand]} flags]
+  (case subcommand
+    ["task" "add"] (task-add! feature (str/join " " title) flags)
+    ["task" "list"] (task-list feature)
     (throw (ex-info "kanban task action must be add or list"
-                    {:action action :allowed ["add" "list"]}))))
+                    {:subcommand subcommand :allowed [["task" "add"] ["task" "list"]]}))))
 
 ;; ---------------------------------------------------------------------------
 ;; notes
@@ -1342,8 +1342,10 @@
   {:op "kanban"
    :doc "Manage the user-facing kanban work board. Run `strand kanban about` for the convention manual."
    :subcommands
-   {"about" {:doc "Return the kanban convention and installed helper surface."}
-    "prime" {:doc "Return full agent priming for working the kanban board."}
+   {"about" {:doc "Return the kanban convention and installed helper surface."
+             :hook-class :read :deadline-class :standard}
+    "prime" {:doc "Return full agent priming for working the kanban board."
+             :hook-class :read :deadline-class :standard}
     "add" {:doc "Create a feature or epic card."
            :flags {:body {:doc "Longer card context."}
                    :source {:doc "Path or URL for design context."}
@@ -1354,22 +1356,29 @@
            :positionals [{:name :title
                           :required? true
                           :variadic? true
-                          :doc "Card title words."}]}
-    "board" {:doc "Return the grouped board snapshot."}
+                          :doc "Card title words."}]
+           :hook-class :mutating :deadline-class :standard}
+    "board" {:doc "Return the grouped board snapshot."
+             :hook-class :read :deadline-class :standard}
     "card" {:doc "Return one card's resume view."
-            :positionals [{:name :id :required? true :doc "Kanban card id."}]}
-    "next" {:doc "Return the highest-priority (p1 first) oldest active pending feature card."}
+            :positionals [{:name :id :required? true :doc "Kanban card id."}]
+            :hook-class :read :deadline-class :standard}
+    "next" {:doc "Return the highest-priority (p1 first) oldest active pending feature card."
+            :hook-class :read :deadline-class :standard}
     "priority" {:doc "Set an active card's priority (p1 immediate blocker .. p4 someday)."
                 :positionals [{:name :id :required? true :doc "Kanban card id."}
-                              {:name :priority :required? true :doc "Priority: p1, p2, p3, or p4."}]}
+                              {:name :priority :required? true :doc "Priority: p1, p2, p3, or p4."}]
+                :hook-class :mutating :deadline-class :standard}
     "promote" {:doc "Move a refinement card into the pending lane."
-               :positionals [{:name :id :required? true :doc "Kanban card id."}]}
+               :positionals [{:name :id :required? true :doc "Kanban card id."}]
+               :hook-class :mutating :deadline-class :standard}
     "claim" {:doc "Claim a pending feature card."
              :flags {:owner {:doc "Claimant name (required by handler)."}
                      :branch {:doc "Work branch (required by handler)."}
                      :worktree {:doc "Optional worktree path."}
                      :run-id {:doc "Optional tracker run-id joined by `kanban card` (stamps kanban/run-id)."}}
-             :positionals [{:name :id :required? true :doc "Kanban card id."}]}
+             :positionals [{:name :id :required? true :doc "Kanban card id."}]
+             :hook-class :mutating :deadline-class :standard}
     "note" {:doc "Append a note to a card or task; note the doing-task as you go."
             :flags {:by {:doc "Note attribution."}
                     :kind {:doc "Open note/kind view hint: activity, decision, review-dump, summary."}}
@@ -1377,25 +1386,33 @@
                           {:name :text
                            :required? true
                            :variadic? true
-                           :doc "Note text words."}]}
-    "task" {:doc "Manage a feature card's tasks: `add <feature> <title...>` or `list <feature>`."
-            :flags {:body {:doc "Longer task context (add only)."}
-                    :depends-on {:repeat? true
-                                 :doc "Task/strand id this task depends on (repeatable; add only)."}}
-            :positionals [{:name :action :required? true :doc "Task action: add or list."}
-                          {:name :feature :required? true :doc "Feature card id the tasks hang under."}
-                          {:name :title
-                           :variadic? true
-                           :doc "Task title words (add only)."}]}
+                           :doc "Note text words."}]
+            :hook-class :mutating :deadline-class :standard}
+    "task" {:doc "Manage a feature card's tasks."
+            :subcommands
+            {"add" {:doc "Create a task under a feature card."
+                    :flags {:body {:doc "Longer task context."}
+                            :depends-on {:repeat? true
+                                         :doc "Task/strand id this task depends on (repeatable)."}}
+                    :positionals [{:name :feature :required? true :doc "Feature card id the task hangs under."}
+                                  {:name :title :required? true :variadic? true :doc "Task title words."}]
+                    :hook-class :mutating :deadline-class :standard}
+             "list" {:doc "List a feature card's tasks."
+                     :positionals [{:name :feature :required? true :doc "Feature card id."}]
+                     :hook-class :read :deadline-class :standard}}}
     "review" {:doc "Move a claimed card into the in_review lane."
-              :positionals [{:name :id :required? true :doc "Kanban card id."}]}
+              :positionals [{:name :id :required? true :doc "Kanban card id."}]
+              :hook-class :mutating :deadline-class :standard}
     "rework" {:doc "Move an in_review card back to claimed for rework."
-              :positionals [{:name :id :required? true :doc "Kanban card id."}]}
+              :positionals [{:name :id :required? true :doc "Kanban card id."}]
+              :hook-class :mutating :deadline-class :standard}
     "finish" {:doc "Close a card with an explicit outcome. Features close from claimed/in_review; epics close from refinement/pending (done requires closed feature children, abandoned cascades reversibly)."
               :flags {:outcome {:doc "Closed outcome; defaults to done. For an epic: done|abandoned."}}
-              :positionals [{:name :id :required? true :doc "Kanban card id."}]}
+              :positionals [{:name :id :required? true :doc "Kanban card id."}]
+              :hook-class :mutating :deadline-class :standard}
     "reopen" {:doc "Reopen an abandoned epic, reversing exactly the cascade the matching abandon closed."
-              :positionals [{:name :id :required? true :doc "Abandoned epic card id."}]}}})
+              :positionals [{:name :id :required? true :doc "Abandoned epic card id."}]
+              :hook-class :mutating :deadline-class :standard}}})
 
 (defn- legacy-flags
   "Return parsed keyword flags in the string-keyed shape expected by handlers."
@@ -1404,7 +1421,7 @@
         (keep (fn [[k v]]
                 (when (and (not= k :subcommand)
                            (some? v)
-                           (not (contains? #{:id :title :text :action :feature} k)))
+                           (not (contains? #{:id :title :text :feature} k)))
                   [(str "--" (name k)) v])))
         args))
 
@@ -1413,21 +1430,22 @@
   [{:op/keys [args]}]
   (let [flags (legacy-flags args)]
     (case (:subcommand args)
-      "about" (about)
-      "prime" (prime)
-      "add" (add! (str/join " " (:title args)) flags)
-      "board" (board)
-      "card" (card-view (:id args))
-      "next" {:operation "kanban next" :next (next-card)}
-      "priority" (set-priority! (:id args) (:priority args))
-      "promote" (promote! (:id args))
-      "claim" (claim! (:id args) flags)
-      "task" (task-op args flags)
-      "review" (review! (:id args))
-      "rework" (rework! (:id args))
-      "note" (note! (:id args) (str/join " " (:text args)) flags)
-      "finish" (finish! (:id args) flags)
-      "reopen" (reopen! (:id args)))))
+      ["about"] (about)
+      ["prime"] (prime)
+      ["add"] (add! (str/join " " (:title args)) flags)
+      ["board"] (board)
+      ["card"] (card-view (:id args))
+      ["next"] {:operation "kanban next" :next (next-card)}
+      ["priority"] (set-priority! (:id args) (:priority args))
+      ["promote"] (promote! (:id args))
+      ["claim"] (claim! (:id args) flags)
+      ["task" "add"] (task-op args flags)
+      ["task" "list"] (task-op args flags)
+      ["review"] (review! (:id args))
+      ["rework"] (rework! (:id args))
+      ["note"] (note! (:id args) (str/join " " (:text args)) flags)
+      ["finish"] (finish! (:id args) flags)
+      ["reopen"] (reopen! (:id args)))))
 
 ;; ---------------------------------------------------------------------------
 ;; kanban-export: a card's full parent-of subtree for offline rendering
@@ -1486,16 +1504,17 @@
    :positionals [{:name :card-id
                   :type :string
                   :required? true
-                  :doc "Feature or epic card strand id."}]})
+                  :doc "Feature or epic card strand id."}]
+   :hook-class :read :deadline-class :standard})
 
 (def ^:private kanban-returns
-  {:subcommands
-   (into {}
-         (map (fn [subcommand]
-                [subcommand {:type :map
-                             :required {:operation :string}
-                             :extra :json}]))
-         (keys (:subcommands kanban-arg-spec)))})
+  (letfn [(return-node [node]
+            (if-let [subcommands (:subcommands node)]
+              {:subcommands (into {}
+                                  (map (fn [[name child]] [name (return-node child)]))
+                                  subcommands)}
+              {:type :map :required {:operation :string} :extra :json}))]
+    (return-node kanban-arg-spec)))
 
 (def ^:private kanban-export-returns
   {:type :map
@@ -1516,11 +1535,11 @@
 
 (def ^:private kanban-op-options
   {:doc "Manage the user-facing kanban work board. Run `strand kanban about` for the convention manual."
-   :arg-spec kanban-arg-spec :returns kanban-returns :hook-class :mutating})
+   :arg-spec kanban-arg-spec :returns kanban-returns})
 
 (def ^:private kanban-export-op-options
   {:doc "Return a card's full parent-of subtree with its internal depends-on edges."
-   :arg-spec kanban-export-arg-spec :returns kanban-export-returns :hook-class :read})
+   :arg-spec kanban-export-arg-spec :returns kanban-export-returns})
 
 (defn contribute
   "Return kanban's complete owner contribution for module publication.

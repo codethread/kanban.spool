@@ -112,7 +112,7 @@ A note may carry the primitive's `note/kind` decorating attr (`--kind <value>`) 
 
 ## CLI op
 
-Install registers one declared-subcommand operation. `strand help kanban` shows the machine-readable verb/flag surface, and `strand kanban help`, `strand kanban -h`, and `strand kanban --help` return that same detail projection. Bare `strand kanban` and unknown verbs fail loudly with the available subcommand names.
+Install registers one declared-subcommand operation. `strand help kanban` shows the machine-readable verb/flag surface; `strand help kanban task add` resolves the nested task-add leaf, including its `mutating` and `standard` classes. Bare `strand kanban` and unknown verbs fail loudly with the available subcommand names. The old `strand kanban help` form is retired; use the root `help` operation instead.
 
 ```sh
 strand kanban prime

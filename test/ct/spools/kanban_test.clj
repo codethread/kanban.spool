@@ -63,11 +63,15 @@
     #{[operation context]}))
 
 (defn- op-return-leaves [{:keys [name returns]}]
-  (if (and (map? returns) (contains? returns :subcommands))
-    (into #{} (mapcat (fn [[subcommand return-case]]
-                        (return-case-leaves name {:subcommand subcommand} return-case)))
-          (:subcommands returns))
-    (return-case-leaves name {} returns)))
+  (letfn [(leaves [return-case path]
+            (if-let [subcommands (:subcommands return-case)]
+              (set (mapcat (fn [[subcommand child]]
+                             (leaves child (conj path subcommand)))
+                           subcommands))
+              (return-case-leaves name
+                                  (if (seq path) {:subcommand path} {})
+                                  return-case)))]
+    (leaves returns [])))
 
 (deftest production-return-coverage-is-derived-from-kanban-provenance
   (with-kanban
@@ -181,6 +185,13 @@
               verbs (mapv :name children)]
           (is (= ["about" "add" "board" "card" "claim" "finish" "next" "note" "prime" "priority" "promote" "reopen" "review" "rework" "task"] verbs))
           (is (some #(= "about" (:name %)) children))))
+      (testing "depth-N help resolves task add to its classified leaf"
+        (let [detail (weaver/op! rt 'help ["kanban" "task" "add"])
+              node (:node detail)]
+          (is (= "add" (:name node)))
+          (is (= "mutating" (:hook-class node)))
+          (is (= "standard" (:deadline-class node)))
+          (is (empty? (:children node)))))
       (testing "the retired sole-token `kanban help` sugar redirects loudly to `strand help kanban`"
         ;; DELTA-Dtf-001.CC5 / DELTA-Dtf-002.CC3 retired the `<op> help` whole-op
         ;; alias; a bare `help` verb now fails with the loud help-grammar redirect
@@ -196,9 +207,9 @@
           (is (= :missing-subcommand (:reason (ex-data missing))))
           (is (= :unknown-subcommand (:reason (ex-data unknown))))
           (is (= ["about" "add" "board" "card" "claim" "finish" "next" "note" "prime" "priority" "promote" "reopen" "review" "rework" "task"]
-                 (:available-subcommands (ex-data missing))))
-          (is (= (:available-subcommands (ex-data missing))
-                 (:available-subcommands (ex-data unknown)))))))))
+                 (:available (ex-data missing))))
+          (is (= (:available (ex-data missing))
+                 (:available (ex-data unknown)))))))))
 
 (deftest kanban-prime-supersets-about-with-working-discipline
   (with-kanban
@@ -716,12 +727,12 @@
               (is (= [task-id] (mapv :id (:tasks listed))))
               (is (= "ready" (:status (first (:tasks listed))))))))
         (testing "task add fails loudly on a missing title, non-card feature, and unknown action"
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"title must be a non-blank"
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Missing required argument title"
                                 (op! rt "task" "add" feature-id)))
           (let [orphan (weaver/add! rt {:title "Loose strand"})]
             (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not a kanban card"
                                   (op! rt "task" "add" (:id orphan) "x"))))
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"action must be add or list"
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown subcommand"
                                 (op! rt "task" "bogus" feature-id))))
         (testing "task add/list reject an epic parent — only features bear tasks"
           (let [epic-id (get-in (op! rt "add" "Epic theme" "--type" "epic") [:card :id])]

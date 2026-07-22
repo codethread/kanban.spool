@@ -639,7 +639,8 @@
 (def ^:private kanban-peers-arg-spec
   "Declared command surface for the `kanban-peers` op."
   {:op "kanban-peers"
-   :doc "List sibling weavers and whether each accepts peered kanban cards."})
+   :doc "List sibling weavers and whether each accepts peered kanban cards."
+   :hook-class :read :deadline-class :standard})
 
 (def ^:private kanban-send-arg-spec
   "Declared command surface for the `kanban-send` op."
@@ -652,7 +653,8 @@
                  {:name :card-id
                   :type :string
                   :required? true
-                  :doc "Local feature or epic card id to send."}]})
+                  :doc "Local feature or epic card id to send."}]
+   :hook-class :mutating :deadline-class :standard})
 
 (def ^:private kanban-peers-returns
   {:type :map
@@ -676,14 +678,12 @@
   {:ops {"kanban-peers" (op-entry/assemble 'kanban-peers
                                            {:doc (:doc kanban-peers-arg-spec)
                                             :arg-spec kanban-peers-arg-spec
-                                            :returns kanban-peers-returns
-                                            :hook-class :read}
+                                            :returns kanban-peers-returns}
                                            'ct.spools.kanban.peering/peers-op)
          "kanban-send" (op-entry/assemble 'kanban-send
                                           {:doc (:doc kanban-send-arg-spec)
                                            :arg-spec kanban-send-arg-spec
-                                           :returns kanban-send-returns
-                                           :hook-class :mutating}
+                                           :returns kanban-send-returns}
                                           'ct.spools.kanban.peering/send-card-op)}})
 
 (defn- require-peering-prerequisites! [rt]
@@ -711,7 +711,8 @@
       {:reconciled :applied
        :op (guild-register-op! runtime 'kanban.send.v1
                                {:doc "Receive a peered kanban card or epic bundle onto this board."
-                                :input-spec ::send-input :returns send-returns}
+                                :input-spec ::send-input :returns send-returns
+                                :hook-class :mutating :deadline-class :standard}
                                'ct.spools.kanban.peering/send-op)})))
 
 (defn install-peering!
@@ -733,17 +734,18 @@
      :op (guild-register-op! rt 'kanban.send.v1
                              {:doc "Receive a peered kanban card or epic bundle onto this board."
                               :input-spec ::send-input
-                              :returns send-returns}
+                              :returns send-returns
+                              :hook-class :mutating :deadline-class :standard}
                              'ct.spools.kanban.peering/send-op)
      :ops [(if (op-registered? rt "kanban-peers")
              (weaver/resolve-op rt 'kanban-peers)
              (weaver/register-op! rt 'kanban-peers
                                   {:doc (:doc kanban-peers-arg-spec) :arg-spec kanban-peers-arg-spec
-                                   :returns kanban-peers-returns :hook-class :read}
+                                   :returns kanban-peers-returns}
                                   'ct.spools.kanban.peering/peers-op))
            (if (op-registered? rt "kanban-send")
              (weaver/resolve-op rt 'kanban-send)
              (weaver/register-op! rt 'kanban-send
                                   {:doc (:doc kanban-send-arg-spec) :arg-spec kanban-send-arg-spec
-                                   :returns kanban-send-returns :hook-class :mutating}
+                                   :returns kanban-send-returns}
                                   'ct.spools.kanban.peering/send-card-op))]}))

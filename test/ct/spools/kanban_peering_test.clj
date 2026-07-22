@@ -473,13 +473,13 @@
         (testing "kanban-peers is a read op with its arg-spec and returns"
           (let [entry (get ops "kanban-peers")]
             (is (some? entry))
-            (is (= :read (:hook-class entry)))
+            (is (= :read (get-in entry [:arg-spec :hook-class])))
             (is (= "kanban-peers" (get-in entry [:arg-spec :op])))
             (is (some? (:returns entry)))))
         (testing "kanban-send is a mutating op with positionals and returns"
           (let [entry (get ops "kanban-send")]
             (is (some? entry))
-            (is (= :mutating (:hook-class entry)))
+            (is (= :mutating (get-in entry [:arg-spec :hook-class])))
             (is (= [:peer :card-id] (mapv :name (get-in entry [:arg-spec :positionals]))))
             (is (some? (:returns entry)))))))))
 
