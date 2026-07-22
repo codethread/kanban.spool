@@ -208,38 +208,35 @@ Peering stamps every card it sends with the local weaver's **published name**, s
 {"configFormat": "alpha", "name": "backend"}
 ```
 
-Then activate, in order: guild first, kanban second, `install-peering!` last. `install-peering!` fails loudly if guild or the kanban board op is not already registered, so the `:after` ordering is a hard prerequisite, not a preference:
+Then declare the modules in order: guild first, kanban second, peering last. Peering reconciliation fails loudly if guild or the kanban board op is not already registered, so the `:after` ordering is a hard prerequisite, not a preference:
 
 ```clojure
-(runtime/sync! runtime)
-
-(runtime/use! runtime
+(runtime/module! runtime
   :guild
   {:ns 'skein.spools.guild
    :spools ['skein.spools/guild]
+   :contribute 'skein.spools.guild/contribute
+   :reconcile 'skein.spools.guild/reconcile
    :required? true})
 
-(require '[skein.spools.guild :as guild])
-(guild/install! runtime)
-
-(runtime/use! runtime
+(runtime/module! runtime
   :kanban
   {:ns 'ct.spools.kanban
    :spools ['codethread/kanban]
-   :call 'ct.spools.kanban/install!
+   :contribute 'ct.spools.kanban/contribute
+   :reconcile 'ct.spools.kanban/reconcile
    :required? true})
 
-(runtime/use! runtime
+(runtime/module! runtime
   :kanban/peering
-  {:ns 'ct.spools.kanban
+  {:ns 'ct.spools.kanban.peering
    :spools ['codethread/kanban 'skein.spools/guild]
    :after [:guild :kanban]
-   :call 'ct.spools.kanban/install-peering!
+   :contribute 'ct.spools.kanban.peering/contribute
+   :reconcile 'ct.spools.kanban.peering/reconcile
    :required? true})
 ```
 
-In a live module graph, use `ct.spools.kanban.peering/contribute` and
-`ct.spools.kanban.peering/reconcile` for this entry after `:guild` and `:kanban`.
 The owner contribution replaces `kanban-peers` and `kanban-send` as one set;
 Guild continues to own the `kanban.send.v1` dispatch facade.
 

@@ -7,8 +7,8 @@ task tier, notes, and the `strand kanban` CLI op.
 
 It is trusted Clojure code for a live Skein weaver. The spool has no
 `spool.edn` manifest; consumption is the manifest-free contract: approve source
-in `spools.edn` or `spools.local.edn`, run `sync!`, then activate explicitly
-with `use!`.
+in `spools.edn` or `spools.local.edn`, then declare the module explicitly from
+trusted startup or REPL code.
 
 The board contract lives in [kanban.md](./kanban.md); worked composition
 recipes live in [kanban.cookbook.md](./kanban.cookbook.md). At runtime,
@@ -75,10 +75,8 @@ encoded in a manifest.
 
 ## Activation
 
-Always `sync!` before any `:spools`-guarded `use!`: synced approved roots are
-what activation loads from. The consumer owns the runtime and activates kanban
-explicitly from trusted `init.clj` or REPL code. Kanban has no prerequisite to
-activate first:
+The consumer owns the runtime and declares kanban explicitly from trusted
+`init.clj` or REPL code. Kanban has no prerequisite module:
 
 ```clojure
 (require '[skein.api.current.alpha :as current]
@@ -86,23 +84,18 @@ activate first:
 
 (def runtime (current/runtime))
 
-(runtime/sync! runtime)
-
-(runtime/use! runtime
+(runtime/module! runtime
   :kanban
   {:spools ['codethread/kanban]
    :ns 'ct.spools.kanban
-   :call 'ct.spools.kanban/install!
+   :contribute 'ct.spools.kanban/contribute
+   :reconcile 'ct.spools.kanban/reconcile
    :required? true})
 ```
 
-`install!` registers the `kanban` and `kanban-export` ops, the `kanban-batch` weave pattern, the
+Applied reconciliation registers the `kanban` and `kanban-export` ops, the `kanban-batch` weave pattern, the
 `kanban-cards`/`kanban-pending` queries, and declares the `kanban/*`
-attribute namespace. It never binds a tracker.
-
-For live module refresh, declare the same owner-complete set with
-`{:ns 'ct.spools.kanban :contribute 'ct.spools.kanban/contribute :reconcile
-'ct.spools.kanban/reconcile}`. Replacing that module atomically replaces both
+attribute namespace. It never binds a tracker. Replacing the module atomically replaces both
 ops, the batch pattern, and both board queries; removing it removes those
 declarations without clearing stored cards or the tracker binding.
 
@@ -115,29 +108,33 @@ its workflow prerequisite, then binds a small trusted-config adapter:
 
 ```clojure
 ;; workflow is an approved spool root, not base-classpath code: guard the
-;; activation on its coordinate so a missing/unsynced approval fails loudly.
-(runtime/use! runtime
+;; module on its coordinate so a missing approval fails loudly.
+(runtime/module! runtime
   :workflow
   {:ns 'skein.spools.workflow
    :spools ['skein.spools/workflow]
+   :contribute 'skein.spools.workflow/contribute
+   :reconcile 'skein.spools.workflow/reconcile
    :required? true})
 
-(runtime/use! runtime
+(runtime/module! runtime
   :devflow
   {:spools ['codethread/devflow]
    :ns 'ct.spools.devflow
-   :call 'ct.spools.devflow/install!
+   :contribute 'ct.spools.devflow/contribute
+   :reconcile 'ct.spools.devflow/reconcile
    :after [:workflow]
    :required? true})
 
 ;; kanban_tracker.clj composes devflow's read fns into kanban's projection shape
 ;; and calls kanban/set-tracker!; it is the one place that knows both vocabularies.
-(runtime/use! runtime
+(runtime/module! runtime
   :kanban/tracker
   {:file "kanban_tracker.clj"
    :spools ['codethread/kanban 'codethread/devflow]
    :after [:kanban :devflow]
-   :call 'kanban-tracker/install!})
+   :contribute 'kanban-tracker/contribute
+   :reconcile 'kanban-tracker/reconcile})
 ```
 
 A repo with a different tracker writes its own module against the same contract;

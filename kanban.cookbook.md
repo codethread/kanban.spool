@@ -389,19 +389,22 @@ In BOTH repos, `.skein/config.json` publishes a portable weaver name — set
          '[skein.api.runtime.alpha :as runtime])
 
 (def runtime (current/runtime))
-(runtime/sync! runtime)
-
-(runtime/use! runtime :guild
+(runtime/module! runtime :guild
   {:ns 'skein.spools.guild :spools ['skein.spools/guild]
+   :contribute 'skein.spools.guild/contribute
+   :reconcile 'skein.spools.guild/reconcile
    :required? true})
-(require '[skein.spools.guild :as guild])
-(guild/install! runtime)
-(runtime/use! runtime :kanban
+(runtime/module! runtime :kanban
   {:ns 'ct.spools.kanban :spools ['codethread/kanban]
-   :call 'ct.spools.kanban/install! :required? true})
-(runtime/use! runtime :kanban/peering
-  {:ns 'ct.spools.kanban :spools ['codethread/kanban 'skein.spools/guild]
-   :after [:guild :kanban] :call 'ct.spools.kanban/install-peering! :required? true})
+   :contribute 'ct.spools.kanban/contribute
+   :reconcile 'ct.spools.kanban/reconcile
+   :required? true})
+(runtime/module! runtime :kanban/peering
+  {:ns 'ct.spools.kanban.peering :spools ['codethread/kanban 'skein.spools/guild]
+   :after [:guild :kanban]
+   :contribute 'ct.spools.kanban.peering/contribute
+   :reconcile 'ct.spools.kanban.peering/reconcile
+   :required? true})
 ```
 
 ```sh
