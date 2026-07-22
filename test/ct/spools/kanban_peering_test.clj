@@ -49,6 +49,12 @@
         (is (= "guild" (:missing (ex-data ex))))
         (is (re-find #"skein\.spools\.guild/install!" (:remedy (ex-data ex))))))))
 
+(deftest peering-owner-contribution-covers-both-local-ops
+  ;; The receive operation remains Guild's dispatch-table declaration; these
+  ;; are the two core-registry entries this module owns and replaces together.
+  (is (= #{"kanban-peers" "kanban-send"}
+         (set (keys (:ops (peering/contribute {})))))))
+
 (deftest install-peering-requires-kanban-first
   ;; precondition (b): the kanban board op must already be installed
   (with-world

@@ -102,6 +102,15 @@
         (is (contains? (set (:keys decl)) "kanban/task")
             "the task-tier marker attr is declared in the vocab registry")))))
 
+(deftest kanban-owner-contribution-covers-every-board-declaration
+  ;; A module publication replaces this owner partition as a whole.  Keep this
+  ;; observable boundary list exact so a future declaration cannot accidentally
+  ;; bypass deletion-on-refresh by being installed imperatively.
+  (let [contribution (kanban/contribute {})]
+    (is (= #{"kanban" "kanban-export"} (set (keys (:ops contribution)))))
+    (is (= #{"kanban-batch"} (set (keys (:patterns contribution)))))
+    (is (= #{"kanban-cards" "kanban-pending"} (set (keys (:queries contribution)))))))
+
 (deftest kanban-about-commands-match-declared-subcommands
   (with-kanban
     (fn [rt]

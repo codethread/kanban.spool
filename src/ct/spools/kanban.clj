@@ -25,6 +25,7 @@
             [skein.api.graph.alpha :as graph]
             [skein.api.vocab.alpha :as vocab]
             [skein.api.weaver.alpha :as weaver]
+            [skein.api.weaver.internal.op-entry :as op-entry]
             [skein.api.format.alpha :as fmt]
             [skein.api.runtime.alpha :as runtime]
             [skein.api.spool.alpha :refer [attr-get entity-projection fail! reject-unknown-keys!]]))
@@ -1504,39 +1505,71 @@
               :parent-of-edges {:type :collection :items :json}
               :depends-on-edges {:type :collection :items :json}}})
 
+(def ^:private kanban-vocab
+  {:kind :attr-namespace
+   :name "kanban"
+   :owner :skein/spools-kanban
+   :keys ["kanban/card" "kanban/lane" "kanban/outcome" "kanban/type"
+          "kanban/priority" "kanban/source" "kanban/task"
+          "kanban/run-id" "kanban/from" "kanban/abandon-restore-lane"]
+   :doc "Kanban card state attributes written by ct.spools.kanban/add!."})
+
+(def ^:private kanban-op-options
+  {:doc "Manage the user-facing kanban work board. Run `strand kanban about` for the convention manual."
+   :arg-spec kanban-arg-spec :returns kanban-returns :hook-class :mutating})
+
+(def ^:private kanban-export-op-options
+  {:doc "Return a card's full parent-of subtree with its internal depends-on edges."
+   :arg-spec kanban-export-arg-spec :returns kanban-export-returns :hook-class :read})
+
+(defn contribute
+  "Return kanban's complete owner contribution for module publication.
+
+  The keys deliberately cover every replaceable board declaration.  A later
+  refresh that omits one therefore removes it instead of retaining a stale
+  command, query, or pattern.  Vocabulary is runtime state rather than a core
+  owner registry, so reconcile owns its idempotent declaration."
+  [_ctx]
+  {:ops {"kanban" (op-entry/assemble 'kanban kanban-op-options
+                                     'ct.spools.kanban/kanban-op)
+         "kanban-export" (op-entry/assemble 'kanban-export kanban-export-op-options
+                                            'ct.spools.kanban/kanban-export-op)}
+   :patterns {"kanban-batch" {:name "kanban-batch"
+                              :doc "Create pending feature cards with bodies and depends-on edges."
+                              :fn 'ct.spools.kanban/kanban-batch
+                              :input-spec ::kanban-batch-input}}
+   :queries {"kanban-cards" [:= [:attr "kanban/card"] "true"]
+             "kanban-pending" [:and [:= :state "active"]
+                               [:= [:attr "kanban/card"] "true"]
+                               [:= [:attr "kanban/lane"] "pending"]]}})
+
+(defn reconcile
+  "Reconcile kanban's non-registry runtime state around module publication."
+  [{:keys [runtime] :as ctx}]
+  (if (= :removed (get-in ctx [:module/contribution :status]))
+    {:reconciled :removed}
+    (do (vocab/declare! runtime kanban-vocab)
+        (runtime/spool-state runtime ::state {:version state-version} new-state)
+        {:reconciled :applied})))
+
 (defn install!
-  "Install the kanban op, batch pattern, and board queries into the active weaver."
+  "Install kanban directly for legacy trusted config.
+
+  Module config should use `contribute`/`reconcile`; this entry point retains
+  the pre-module API for existing workspaces."
   []
   (let [rt (current/runtime)]
-    {:installed true
-     :namespace 'ct.spools.kanban
-     :vocab (vocab/declare! rt {:kind :attr-namespace
-                                :name "kanban"
-                                :owner :skein/spools-kanban
-                                :keys ["kanban/card" "kanban/lane" "kanban/outcome" "kanban/type"
-                                       "kanban/priority" "kanban/source" "kanban/task"
-                                       "kanban/run-id" "kanban/from" "kanban/abandon-restore-lane"]
-                                :doc "Kanban card state attributes written by ct.spools.kanban/add!."})
-     :ops [(weaver/register-op! rt 'kanban
-                                {:doc "Manage the user-facing kanban work board. Run `strand kanban about` for the convention manual."
-                                 :arg-spec kanban-arg-spec
-                                 :returns kanban-returns
-                                 :hook-class :mutating}
-                                'ct.spools.kanban/kanban-op)
-           (weaver/register-op! rt 'kanban-export
-                                {:doc "Return a card's full parent-of subtree with its internal depends-on edges."
-                                 :arg-spec kanban-export-arg-spec
-                                 :returns kanban-export-returns
-                                 :hook-class :read}
+    {:installed true :namespace 'ct.spools.kanban
+     :vocab (vocab/declare! rt kanban-vocab)
+     :ops [(weaver/register-op! rt 'kanban kanban-op-options 'ct.spools.kanban/kanban-op)
+           (weaver/register-op! rt 'kanban-export kanban-export-op-options
                                 'ct.spools.kanban/kanban-export-op)]
      :pattern (patterns/register-pattern! rt 'kanban-batch
                                           "Create pending feature cards with bodies and depends-on edges."
-                                          'ct.spools.kanban/kanban-batch
-                                          ::kanban-batch-input)
+                                          'ct.spools.kanban/kanban-batch ::kanban-batch-input)
      :queries [(graph/register-query! rt 'kanban-cards [:= [:attr "kanban/card"] "true"])
                (graph/register-query! rt 'kanban-pending
-                                      [:and
-                                       [:= :state "active"]
+                                      [:and [:= :state "active"]
                                        [:= [:attr "kanban/card"] "true"]
                                        [:= [:attr "kanban/lane"] "pending"]])]}))
 

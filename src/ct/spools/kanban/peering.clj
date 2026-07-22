@@ -29,6 +29,7 @@
             [skein.api.graph.alpha :as graph]
             [skein.api.peers.alpha :as peers]
             [skein.api.weaver.alpha :as weaver]
+            [skein.api.weaver.internal.op-entry :as op-entry]
             [skein.api.spool.alpha :refer [attr-get fail!]]
             [ct.spools.kanban :as kanban]))
 
@@ -664,16 +665,54 @@
               :peer :string
               :sent :json}})
 
-(defn- register-or-replace-op!
-  "Upsert a plain weaver op so `install-peering!` stays reload-safe.
+(defn contribute
+  "Return the complete owner set for peering's local CLI declarations.
 
-  `register-op!` fails loudly on a re-registered name, so a second
-  `install-peering!` (config reload) would otherwise collide; this replaces an
-  existing name and registers a new one."
-  [rt op-name opts fn-sym]
-  (if (op-registered? rt (name op-name))
-    (weaver/replace-op! rt op-name opts fn-sym)
-    (weaver/register-op! rt op-name opts fn-sym)))
+  Guild owns its dispatch facade and receive-op table; `reconcile` below keeps
+  the `kanban.send.v1` handler in that table.  The two board-local operations
+  are ordinary core registry entries, so publishing them here gives refresh its
+  deletion semantics without ad-hoc register-or-replace probing."
+  [_ctx]
+  {:ops {"kanban-peers" (op-entry/assemble 'kanban-peers
+                                           {:doc (:doc kanban-peers-arg-spec)
+                                            :arg-spec kanban-peers-arg-spec
+                                            :returns kanban-peers-returns
+                                            :hook-class :read}
+                                           'ct.spools.kanban.peering/peers-op)
+         "kanban-send" (op-entry/assemble 'kanban-send
+                                          {:doc (:doc kanban-send-arg-spec)
+                                           :arg-spec kanban-send-arg-spec
+                                           :returns kanban-send-returns
+                                           :hook-class :mutating}
+                                          'ct.spools.kanban.peering/send-card-op)}})
+
+(defn- require-peering-prerequisites! [rt]
+  (when-not (op-registered? rt "guild")
+    (fail! "kanban install-peering! requires the guild spool to be installed first"
+           {:missing "guild" :registered-ops (mapv :name (weaver/ops rt))
+            :remedy "run (skein.spools.guild/install! runtime) before install-peering!"}))
+  (when-not (op-registered? rt "kanban")
+    (fail! "kanban install-peering! requires the kanban board to be installed first"
+           {:missing "kanban" :registered-ops (mapv :name (weaver/ops rt))
+            :remedy "run (ct.spools.kanban/install!) before install-peering!"})))
+
+(defn reconcile
+  "Reconcile Guild's receive table after local owner publication.
+
+  Guild has the receive-dispatch state in this frozen baseline; its supported
+  registrar is idempotent, preserving the established wire contract and seams.
+  Local board operations themselves are entirely owner-published by
+  `contribute`."
+  [{:keys [runtime] :as ctx}]
+  (if (= :removed (get-in ctx [:module/contribution :status]))
+    {:reconciled :removed}
+    (let [guild-register-op! (requiring-resolve 'skein.spools.guild/register-op!)]
+      (require-peering-prerequisites! runtime)
+      {:reconciled :applied
+       :op (guild-register-op! runtime 'kanban.send.v1
+                               {:doc "Receive a peered kanban card or epic bundle onto this board."
+                                :input-spec ::send-input :returns send-returns}
+                               'ct.spools.kanban.peering/send-op)})))
 
 (defn install-peering!
   "Register the receive and send-side board-peering ops after guild and kanban.
@@ -688,16 +727,7 @@
   []
   (let [rt (current/runtime)
         guild-register-op! (requiring-resolve 'skein.spools.guild/register-op!)]
-    (when-not (op-registered? rt "guild")
-      (fail! "kanban install-peering! requires the guild spool to be installed first"
-             {:missing "guild"
-              :registered-ops (mapv :name (weaver/ops rt))
-              :remedy "run (skein.spools.guild/install! runtime) before install-peering!"}))
-    (when-not (op-registered? rt "kanban")
-      (fail! "kanban install-peering! requires the kanban board to be installed first"
-             {:missing "kanban"
-              :registered-ops (mapv :name (weaver/ops rt))
-              :remedy "run (ct.spools.kanban/install!) before install-peering!"}))
+    (require-peering-prerequisites! rt)
     {:installed true
      :namespace 'ct.spools.kanban.peering
      :op (guild-register-op! rt 'kanban.send.v1
@@ -705,15 +735,15 @@
                               :input-spec ::send-input
                               :returns send-returns}
                              'ct.spools.kanban.peering/send-op)
-     :ops [(register-or-replace-op! rt 'kanban-peers
-                                    {:doc (:doc kanban-peers-arg-spec)
-                                     :arg-spec kanban-peers-arg-spec
-                                     :returns kanban-peers-returns
-                                     :hook-class :read}
-                                    'ct.spools.kanban.peering/peers-op)
-           (register-or-replace-op! rt 'kanban-send
-                                    {:doc (:doc kanban-send-arg-spec)
-                                     :arg-spec kanban-send-arg-spec
-                                     :returns kanban-send-returns
-                                     :hook-class :mutating}
-                                    'ct.spools.kanban.peering/send-card-op)]}))
+     :ops [(if (op-registered? rt "kanban-peers")
+             (weaver/resolve-op rt 'kanban-peers)
+             (weaver/register-op! rt 'kanban-peers
+                                  {:doc (:doc kanban-peers-arg-spec) :arg-spec kanban-peers-arg-spec
+                                   :returns kanban-peers-returns :hook-class :read}
+                                  'ct.spools.kanban.peering/peers-op))
+           (if (op-registered? rt "kanban-send")
+             (weaver/resolve-op rt 'kanban-send)
+             (weaver/register-op! rt 'kanban-send
+                                  {:doc (:doc kanban-send-arg-spec) :arg-spec kanban-send-arg-spec
+                                   :returns kanban-send-returns :hook-class :mutating}
+                                  'ct.spools.kanban.peering/send-card-op))]}))

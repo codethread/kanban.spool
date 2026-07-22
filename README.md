@@ -100,6 +100,12 @@ activate first:
 `kanban-cards`/`kanban-pending` queries, and declares the `kanban/*`
 attribute namespace. It never binds a tracker.
 
+For live module refresh, declare the same owner-complete set with
+`{:ns 'ct.spools.kanban :contribute 'ct.spools.kanban/contribute :reconcile
+'ct.spools.kanban/reconcile}`. Replacing that module atomically replaces both
+ops, the batch pattern, and both board queries; removing it removes those
+declarations without clearing stored cards or the tracker binding.
+
 ### Binding a tracker (optional)
 
 To have `kanban card` project a run's status and ready steps, bind a tracker

@@ -238,6 +238,11 @@ Then activate, in order: guild first, kanban second, `install-peering!` last. `i
    :required? true})
 ```
 
+In a live module graph, use `ct.spools.kanban.peering/contribute` and
+`ct.spools.kanban.peering/reconcile` for this entry after `:guild` and `:kanban`.
+The owner contribution replaces `kanban-peers` and `kanban-send` as one set;
+Guild continues to own the `kanban.send.v1` dispatch facade.
+
 ### Discovering and sending
 
 `kanban-peers` lists sibling weavers from mill metadata. Every peer is listed; each **running non-self** peer is probed via `guild list`, and `kanban-send?` is `true` when it advertises `kanban.send.v1`. A running peer that rejects `guild list` as an unknown op is an expected non-peering sibling (`kanban-send? false`); any other transport or protocol failure — including a malformed `guild list` envelope — propagates loudly. Stale peers (`running? false`) are listed but never probed. The local weaver — when it appears in the roster — is marked `self? true` and classified from the local op registry, not a socket call to itself.
