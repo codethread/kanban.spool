@@ -3,11 +3,11 @@
 
 (def runtime (current/runtime))
 
-;; batteries ships on the classpath (:paths), not a synced spool root; require
-;; it so the module source load classifies it as classpath-owned.
-(require 'skein.spools.batteries)
+;; Batteries is approved as a shipped source-root spool; the :spools guard
+;; keeps source loading behind that visible spools.edn approval.
 (runtime/module! runtime :skein/spools-batteries
   {:ns 'skein.spools.batteries
+   :spools ['skein.spools/batteries]
    :contribute 'skein.spools.batteries/contribute
    :reconcile 'skein.spools.batteries/reconcile})
 
