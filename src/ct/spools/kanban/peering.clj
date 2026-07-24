@@ -26,6 +26,7 @@
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [skein.api.current.alpha :as current]
+            [skein.api.format.alpha :as fmt]
             [skein.api.graph.alpha :as graph]
             [skein.api.peers.alpha :as peers]
             [skein.api.weaver.alpha :as weaver]
@@ -690,11 +691,19 @@
   (when-not (op-registered? rt "guild")
     (fail! "kanban install-peering! requires the guild module to be active first"
            {:missing "guild" :registered-ops (mapv :name (weaver/ops rt))
-            :remedy "activate the guild module (runtime/module! on skein.spools.guild/module) before install-peering!"}))
+            :remedy (fmt/reflow "
+                     |Activate the guild module with
+                     |(runtime/module! runtime :guild {:ns 'skein.spools.guild
+                     |:spools ['skein.spools/guild] :required? true}) before
+                     |install-peering!.")}))
   (when-not (op-registered? rt "kanban")
     (fail! "kanban install-peering! requires the kanban module to be active first"
            {:missing "kanban" :registered-ops (mapv :name (weaver/ops rt))
-            :remedy "activate the kanban module (runtime/module! on ct.spools.kanban/module) before install-peering!"})))
+            :remedy (fmt/reflow "
+                     |Activate the kanban module with
+                     |(runtime/module! runtime :kanban {:ns 'ct.spools.kanban
+                     |:spools ['codethread/kanban] :required? true}) before
+                     |install-peering!.")})))
 
 (defn reconcile
   "Reconcile Guild's receive table after local owner publication.
@@ -714,6 +723,14 @@
                                 :input-spec ::send-input :returns send-returns
                                 :hook-class :mutating :deadline-class :standard}
                                'ct.spools.kanban.peering/send-op)})))
+
+(def spool
+  "Entry-point declaration for the kanban peering spool.
+
+  Consumers declare only its source target and world policy. Unqualified
+  symbols resolve against this namespace."
+  {:contribute 'contribute
+   :reconcile 'reconcile})
 
 (defn install-peering!
   "Register the receive and send-side board-peering ops after guild and kanban.

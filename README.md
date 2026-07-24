@@ -22,7 +22,13 @@ render a card's subtree to a standalone HTML file offline (see kanban.md's
 
 ## Prerequisites
 
-- A Skein checkout/runtime providing the blessed `skein.api.*.alpha` surface.
+- A Skein checkout/runtime at commit
+  `343f886880092bc38ed3e0522eca2d95a7cf04bc` or a descendant. That Phase A
+  merge introduced convention-resolved `spool` entry points; no Skein release
+  marker contains it yet, so this requirement cannot yet be expressed as
+  `:skein/min`. An older Skein can accept the source-mode declaration while
+  publishing no kanban contribution, so verify the resolved entry points in
+  `runtime/status` and confirm the `kanban` operation after activation.
 - A live weaver configured from a workspace you control.
 - A 40-hex git SHA pin for this repository, or a local checkout approved through
   `spools.local.edn` for development.
@@ -76,7 +82,10 @@ encoded in a manifest.
 ## Activation
 
 The consumer owns the runtime and declares kanban explicitly from trusted
-`init.clj` or REPL code. Kanban has no prerequisite module:
+`init.clj` or REPL code. The declaration names a source target and world policy
+only: kanban's entry points come from the `spool` var in
+[`src/ct/spools/kanban.clj`](./src/ct/spools/kanban.clj), so a consumer never
+mirrors them. Kanban has no prerequisite module:
 
 ```clojure
 (require '[skein.api.current.alpha :as current]
@@ -88,8 +97,6 @@ The consumer owns the runtime and declares kanban explicitly from trusted
   :kanban
   {:spools ['codethread/kanban]
    :ns 'ct.spools.kanban
-   :contribute 'ct.spools.kanban/contribute
-   :reconcile 'ct.spools.kanban/reconcile
    :required? true})
 ```
 
@@ -104,7 +111,9 @@ declarations without clearing stored cards or the tracker binding.
 To have `kanban card` project a run's status and ready steps, bind a tracker
 strategy after kanban activates (see the [Tracker seam](./kanban.md#tracker-seam)
 for the contract). A repo that stages work through devflow activates devflow and
-its workflow prerequisite, then binds a small trusted-config adapter:
+its workflow prerequisite, then binds a small trusted-config adapter. The
+convention-only pair below requires coordinated devflow `v6` and the same Skein
+ancestry floor named above:
 
 ```clojure
 ;; workflow is an approved spool root, not base-classpath code: guard the
@@ -113,16 +122,12 @@ its workflow prerequisite, then binds a small trusted-config adapter:
   :workflow
   {:ns 'skein.spools.workflow
    :spools ['skein.spools/workflow]
-   :contribute 'skein.spools.workflow/contribute
-   :reconcile 'skein.spools.workflow/reconcile
    :required? true})
 
 (runtime/module! runtime
   :devflow
   {:spools ['codethread/devflow]
    :ns 'ct.spools.devflow
-   :contribute 'ct.spools.devflow/contribute
-   :reconcile 'ct.spools.devflow/reconcile
    :after [:workflow]
    :required? true})
 

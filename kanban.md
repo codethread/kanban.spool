@@ -208,23 +208,24 @@ Peering stamps every card it sends with the local weaver's **published name**, s
 {"configFormat": "alpha", "name": "backend"}
 ```
 
-Then declare the modules in order: guild first, kanban second, peering last. Peering reconciliation fails loudly if guild or the kanban board op is not already registered, so the `:after` ordering is a hard prerequisite, not a preference:
+Then declare the modules in order: guild first, kanban second, peering last.
+These convention-only declarations require Skein commit
+`343f886880092bc38ed3e0522eca2d95a7cf04bc` or a descendant; no Skein release
+marker contains that floor yet. Peering reconciliation fails loudly if guild or
+the kanban board op is not already registered, so the `:after` ordering is a
+hard prerequisite, not a preference:
 
 ```clojure
 (runtime/module! runtime
   :guild
   {:ns 'skein.spools.guild
    :spools ['skein.spools/guild]
-   :contribute 'skein.spools.guild/contribute
-   :reconcile 'skein.spools.guild/reconcile
    :required? true})
 
 (runtime/module! runtime
   :kanban
   {:ns 'ct.spools.kanban
    :spools ['codethread/kanban]
-   :contribute 'ct.spools.kanban/contribute
-   :reconcile 'ct.spools.kanban/reconcile
    :required? true})
 
 (runtime/module! runtime
@@ -232,10 +233,11 @@ Then declare the modules in order: guild first, kanban second, peering last. Pee
   {:ns 'ct.spools.kanban.peering
    :spools ['codethread/kanban 'skein.spools/guild]
    :after [:guild :kanban]
-   :contribute 'ct.spools.kanban.peering/contribute
-   :reconcile 'ct.spools.kanban.peering/reconcile
    :required? true})
 ```
+
+Each declaration names a source target and world policy only; its namespace
+publishes the entry points in a public `spool` var.
 
 The owner contribution replaces `kanban-peers` and `kanban-send` as one set;
 Guild continues to own the `kanban.send.v1` dispatch facade.

@@ -385,25 +385,21 @@ In BOTH repos, `.skein/config.json` publishes a portable weaver name — set
 
 ```clojure
 ;; In BOTH repos: .skein/init.clj activates guild, then kanban, then peering.
+;; Requires Skein commit 343f886880092bc38ed3e0522eca2d95a7cf04bc or a
+;; descendant; no Skein release marker contains this convention floor yet.
 (require '[skein.api.current.alpha :as current]
          '[skein.api.runtime.alpha :as runtime])
 
 (def runtime (current/runtime))
 (runtime/module! runtime :guild
   {:ns 'skein.spools.guild :spools ['skein.spools/guild]
-   :contribute 'skein.spools.guild/contribute
-   :reconcile 'skein.spools.guild/reconcile
    :required? true})
 (runtime/module! runtime :kanban
   {:ns 'ct.spools.kanban :spools ['codethread/kanban]
-   :contribute 'ct.spools.kanban/contribute
-   :reconcile 'ct.spools.kanban/reconcile
    :required? true})
 (runtime/module! runtime :kanban/peering
   {:ns 'ct.spools.kanban.peering :spools ['codethread/kanban 'skein.spools/guild]
    :after [:guild :kanban]
-   :contribute 'ct.spools.kanban.peering/contribute
-   :reconcile 'ct.spools.kanban.peering/reconcile
    :required? true})
 ```
 

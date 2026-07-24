@@ -1571,15 +1571,16 @@
         (runtime/spool-state runtime ::state {:version state-version} new-state)
         {:reconciled :applied})))
 
-(def module
-  "Base module declaration datum for the kanban spool (ADR-003.P7).
+(def spool
+  "Entry-point declaration for the kanban spool (ADR-004 `def spool` convention).
 
-  The authored `:ns`/`:contribute`/`:reconcile` triple every consumer starts
-  from: a consuming world assocs its `:spools` guards onto it, and bare-test
-  fixtures assoc `:load :image`. Every variant is `runtime/module!` input."
-  {:ns 'ct.spools.kanban
-   :contribute 'ct.spools.kanban/contribute
-   :reconcile 'ct.spools.kanban/reconcile})
+  The refresh coordinator resolves `:contribute`/`:reconcile` from this public
+  var at every module evaluation, so a consumer declares only a source target
+  and world policy (`{:ns 'ct.spools.kanban :spools ['codethread/kanban]}`) and
+  never mirrors the pair. Unqualified symbols resolve against this namespace;
+  fn values are rejected (ADR-002.O1)."
+  {:contribute 'contribute
+   :reconcile 'reconcile})
 
 (defn install-peering!
   "Register the opt-in `kanban.send.v1` board-peering receive op.

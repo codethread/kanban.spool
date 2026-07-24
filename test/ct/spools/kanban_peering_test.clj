@@ -11,11 +11,18 @@
             [skein.spools.guild]
             [skein.api.graph.alpha :as graph]
             [skein.api.runtime.alpha :as runtime]
+            [skein.api.spool.alpha :as spool]
             [skein.api.weaver.alpha :as weaver]
             [skein.core.weaver.runtime :as weaver-runtime]
             [ct.spools.kanban :as kanban]
             [ct.spools.kanban.peering :as peering]
             [skein.test.alpha :as t]))
+
+(deftest spool-declaration-is-exact-and-valid
+  (is (= {:contribute 'contribute
+          :reconcile 'reconcile}
+         peering/spool))
+  (is (s/valid? ::spool/spool peering/spool)))
 
 (defn- with-world
   "Run (f rt) inside a fresh bound weaver runtime after running (setup rt)."
@@ -32,13 +39,12 @@
 
   The ns require of `skein.spools.guild` guarantees the namespace is
   image-loaded, so `:load :image` skips the source sync a bare test world
-  cannot perform. Throws with the refresh result unless the module applied."
+  cannot perform. The entry points come from the guild namespace's own `spool`
+  var. Throws with the refresh result unless the module applied."
   [rt]
   (let [result (runtime/module! rt :guild
                                 {:ns 'skein.spools.guild
-                                 :load :image
-                                 :contribute 'skein.spools.guild/contribute
-                                 :reconcile 'skein.spools.guild/reconcile})
+                                 :load :image})
         status (get-in result [:modules :guild :status])]
     (when-not (contains? #{:applied :unchanged} status)
       (throw (ex-info "guild module activation failed"
@@ -48,10 +54,11 @@
   "Activate the kanban spool module on `rt` from the loaded JVM image.
 
   The ns require of `ct.spools.kanban` guarantees the namespace is
-  image-loaded, so the exported datum activates with `:load :image`. Throws
-  with the refresh result unless the module applied."
+  image-loaded, so the declaration names only the namespace and `:load :image`
+  and the entry points come from kanban's own `spool` var. Throws with the
+  refresh result unless the module applied."
   [rt]
-  (let [result (runtime/module! rt :kanban (assoc kanban/module :load :image))
+  (let [result (runtime/module! rt :kanban {:ns 'ct.spools.kanban :load :image})
         status (get-in result [:modules :kanban :status])]
     (when-not (contains? #{:applied :unchanged} status)
       (throw (ex-info "kanban module activation failed"
@@ -76,9 +83,11 @@
     (fn [_rt]
       (let [ex (is (thrown-with-msg? clojure.lang.ExceptionInfo
                                      #"requires the guild module"
-                                     (kanban/install-peering!)))]
+                                     (kanban/install-peering!)))
+            remedy (:remedy (ex-data ex))]
         (is (= "guild" (:missing (ex-data ex))))
-        (is (re-find #"skein\.spools\.guild/module" (:remedy (ex-data ex))))))))
+        (is (str/includes? remedy "skein.spools.guild"))
+        (is (str/includes? remedy "skein.spools/guild"))))))
 
 (deftest peering-owner-contribution-covers-both-local-ops
   ;; The receive operation remains Guild's dispatch-table declaration; these
@@ -93,9 +102,11 @@
     (fn [_rt]
       (let [ex (is (thrown-with-msg? clojure.lang.ExceptionInfo
                                      #"requires the kanban module"
-                                     (kanban/install-peering!)))]
+                                     (kanban/install-peering!)))
+            remedy (:remedy (ex-data ex))]
         (is (= "kanban" (:missing (ex-data ex))))
-        (is (re-find #"ct\.spools\.kanban/module" (:remedy (ex-data ex))))))))
+        (is (str/includes? remedy "ct.spools.kanban"))
+        (is (str/includes? remedy "codethread/kanban"))))))
 
 (deftest install-peering-registers-op-and-returns-data
   (with-world

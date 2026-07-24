@@ -1,6 +1,7 @@
 (ns ct.spools.kanban-test
   "Tests for the kanban board spool against a disposable weaver runtime."
   (:require [clojure.set :as set]
+            [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [skein.api.graph.alpha :as graph]
@@ -14,6 +15,12 @@
             [ct.spools.kanban :as kanban]
             [ct.spools.kanban-peering-test]
             [skein.test.alpha :as t]))
+
+(deftest spool-declaration-is-exact-and-valid
+  (is (= {:contribute 'contribute
+          :reconcile 'reconcile}
+         kanban/spool))
+  (is (s/valid? ::spool/spool kanban/spool)))
 
 (deftest exact-entity-projections-discard-extra-fields-and-fail-loudly
   (let [strand {:id "s1" :title "Work" :state "active"
@@ -43,15 +50,16 @@
   The runtime lifecycle and isolation come from the public author test helper
   (`skein.test.alpha/with-weaver-world`), with the runtime thread-bound so the
   spool's `current/runtime` resolution sees this world. kanban ships on this
-  repo's src classpath, so the exported datum activates in image mode. Throws
-  with the refresh result unless the module applied."
+  repo's src classpath, so it activates in image mode from a declaration that
+  names only the namespace; the entry points come from kanban's own `spool`
+  var. Throws with the refresh result unless the module applied."
   [f]
   (t/run-with-weaver-world
    {:storage :sqlite-memory}
    (fn [ctx]
      (weaver-runtime/with-runtime-binding (:runtime ctx)
        #(let [rt (:runtime ctx)
-              result (runtime/module! rt :kanban (assoc kanban/module :load :image))
+              result (runtime/module! rt :kanban {:ns 'ct.spools.kanban :load :image})
               status (get-in result [:modules :kanban :status])]
           (when-not (contains? #{:applied :unchanged} status)
             (throw (ex-info "kanban module activation failed"
