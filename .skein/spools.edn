@@ -1,5 +1,5 @@
 {:spools {skein.spools/batteries {:skein/source-root "spools/batteries"}
           skein.spools/guild {:skein/source-root "spools/guild"}
           codethread/kanban {:git/url "https://github.com/codethread/kanban.spool.git"
-                             :git/sha "aed7d441c1e5a236a6c29cea635bab66bac5a7d6"
-                             :git/tag "v7"}}}
+                             :git/sha "46c4101befafeb2f5b3958a83c0677abc2608eda"
+                             :git/tag "v9"}}}
