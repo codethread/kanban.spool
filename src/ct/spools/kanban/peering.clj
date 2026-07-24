@@ -1,10 +1,10 @@
 (ns ct.spools.kanban.peering
   "Opt-in board peering: the RECEIVE guild op plus the SEND-side local ops.
 
-  A trusted-config module wires `ct.spools.kanban/install-peering!` in after the
-  guild spool is installed (`skein.spools.guild/install! runtime`) and the kanban board
-  op is registered (`ct.spools.kanban/install!`). That entry point registers
-  three ops:
+  A trusted-config module wires `ct.spools.kanban/install-peering!` in after
+  the guild and kanban modules are active (both are module-lifecycle
+  activations; the prerequisites fail loudly when missing). That entry point
+  registers three ops:
 
   - `kanban.send.v1` — the guild receive op. A sibling weaver drops a card, or
     an epic bundle, onto this board. Received cards travel the same
@@ -524,14 +524,14 @@
                    (if (domain-error? ex)
                      (fail! "Target peer runs no guild API and cannot accept kanban.send.v1"
                             {:peer peerish
-                             :remedy "install skein.spools.guild and run kanban install-peering! on the target"})
+                             :remedy "activate the guild module and run kanban install-peering! on the target"})
                      (throw ex))))]
     (validate-guild-list! peerish listed)
     (when-not (advertises-send? listed)
       (fail! "Target peer does not advertise kanban.send.v1 (no kanban peering, or an older kanban)"
              {:peer peerish
               :active (mapv #(get % "name") (get listed "active"))
-              :remedy "run kanban install-peering! on the target after installing guild"}))
+              :remedy "run kanban install-peering! on the target after activating guild"}))
     listed))
 
 ;; The remote kanban.send.v1 result rides back JSON-decoded (string keys). Its
@@ -688,13 +688,13 @@
 
 (defn- require-peering-prerequisites! [rt]
   (when-not (op-registered? rt "guild")
-    (fail! "kanban install-peering! requires the guild spool to be installed first"
+    (fail! "kanban install-peering! requires the guild module to be active first"
            {:missing "guild" :registered-ops (mapv :name (weaver/ops rt))
-            :remedy "run (skein.spools.guild/install! runtime) before install-peering!"}))
+            :remedy "activate the guild module (runtime/module! on skein.spools.guild/module) before install-peering!"}))
   (when-not (op-registered? rt "kanban")
-    (fail! "kanban install-peering! requires the kanban board to be installed first"
+    (fail! "kanban install-peering! requires the kanban module to be active first"
            {:missing "kanban" :registered-ops (mapv :name (weaver/ops rt))
-            :remedy "run (ct.spools.kanban/install!) before install-peering!"})))
+            :remedy "activate the kanban module (runtime/module! on ct.spools.kanban/module) before install-peering!"})))
 
 (defn reconcile
   "Reconcile Guild's receive table after local owner publication.
@@ -718,13 +718,13 @@
 (defn install-peering!
   "Register the receive and send-side board-peering ops after guild and kanban.
 
-  Opt-in: trusted config wires this in after `(skein.spools.guild/install! runtime)` and
-  `(ct.spools.kanban/install!)`. It never installs guild itself — guild's
-  lifecycle has exactly one owner, the repo config. Both preconditions fail loudly
-  with the failing state and the remedy. Registers three ops: the `kanban.send.v1`
-  guild receive op, and the local `kanban-peers` and `kanban-send` ops. Every
-  registration upserts (`guild/register-op!` and `register-or-replace-op!`), so
-  re-running is reload-safe."
+  Opt-in: trusted config wires this in after the guild and kanban modules are
+  active. It never activates guild itself — guild's lifecycle has exactly one
+  owner, the repo config. Both preconditions fail loudly with the failing state
+  and the remedy. Registers three ops: the `kanban.send.v1` guild receive op,
+  and the local `kanban-peers` and `kanban-send` ops. Every registration
+  upserts (`guild/register-op!` and `register-or-replace-op!`), so re-running
+  is reload-safe."
   []
   (let [rt (current/runtime)
         guild-register-op! (requiring-resolve 'skein.spools.guild/register-op!)]

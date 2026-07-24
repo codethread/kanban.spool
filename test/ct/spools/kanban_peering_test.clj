@@ -44,11 +44,24 @@
       (throw (ex-info "guild module activation failed"
                       {:module/key :guild :module/status status :result result})))))
 
+(defn- activate-kanban!
+  "Activate the kanban spool module on `rt` from the loaded JVM image.
+
+  The ns require of `ct.spools.kanban` guarantees the namespace is
+  image-loaded, so the exported datum activates with `:load :image`. Throws
+  with the refresh result unless the module applied."
+  [rt]
+  (let [result (runtime/module! rt :kanban (assoc kanban/module :load :image))
+        status (get-in result [:modules :kanban :status])]
+    (when-not (contains? #{:applied :unchanged} status)
+      (throw (ex-info "kanban module activation failed"
+                      {:module/key :kanban :module/status status :result result})))))
+
 (defn- with-peering
-  "Run (f rt) with guild, kanban, and kanban peering installed in order."
+  "Run (f rt) with guild, kanban, and kanban peering active in order."
   [f]
   (with-world
-    (fn [rt] (activate-guild! rt) (kanban/install!) (kanban/install-peering!))
+    (fn [rt] (activate-guild! rt) (activate-kanban! rt) (kanban/install-peering!))
     f))
 
 (defn- send!
@@ -59,13 +72,13 @@
 (deftest install-peering-requires-guild-first
   ;; precondition (a): guild must already be registered
   (with-world
-    (fn [_rt] (kanban/install!))
+    activate-kanban!
     (fn [_rt]
       (let [ex (is (thrown-with-msg? clojure.lang.ExceptionInfo
-                                     #"requires the guild spool"
+                                     #"requires the guild module"
                                      (kanban/install-peering!)))]
         (is (= "guild" (:missing (ex-data ex))))
-        (is (re-find #"skein\.spools\.guild/install!" (:remedy (ex-data ex))))))))
+        (is (re-find #"skein\.spools\.guild/module" (:remedy (ex-data ex))))))))
 
 (deftest peering-owner-contribution-covers-both-local-ops
   ;; The receive operation remains Guild's dispatch-table declaration; these
@@ -74,19 +87,19 @@
          (set (keys (:ops (peering/contribute {})))))))
 
 (deftest install-peering-requires-kanban-first
-  ;; precondition (b): the kanban board op must already be installed
+  ;; precondition (b): the kanban board module must already be active
   (with-world
     activate-guild!
     (fn [_rt]
       (let [ex (is (thrown-with-msg? clojure.lang.ExceptionInfo
-                                     #"requires the kanban board"
+                                     #"requires the kanban module"
                                      (kanban/install-peering!)))]
         (is (= "kanban" (:missing (ex-data ex))))
-        (is (re-find #"ct\.spools\.kanban/install!" (:remedy (ex-data ex))))))))
+        (is (re-find #"ct\.spools\.kanban/module" (:remedy (ex-data ex))))))))
 
 (deftest install-peering-registers-op-and-returns-data
   (with-world
-    (fn [rt] (activate-guild! rt) (kanban/install!))
+    (fn [rt] (activate-guild! rt) (activate-kanban! rt))
     (fn [rt]
       (let [result (kanban/install-peering!)]
         (is (true? (:installed result)))
@@ -484,7 +497,7 @@
 
 (deftest install-peering-registers-both-send-side-ops
   (with-world
-    (fn [rt] (activate-guild! rt) (kanban/install!))
+    (fn [rt] (activate-guild! rt) (activate-kanban! rt))
     (fn [rt]
       (kanban/install-peering!)
       (let [ops (into {} (map (juxt :name identity)) (weaver/ops rt))]

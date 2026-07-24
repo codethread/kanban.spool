@@ -21,7 +21,6 @@
             [clojure.string :as str]
             [skein.api.current.alpha :as current]
             [skein.api.notes.alpha :as notes]
-            [skein.api.patterns.alpha :as patterns]
             [skein.api.graph.alpha :as graph]
             [skein.api.vocab.alpha :as vocab]
             [skein.api.weaver.alpha :as weaver]
@@ -874,8 +873,9 @@
   the projected steps follow; `:project` is `(fn [run-id] -> {:status <string|nil>
   :ready [step ...]})`, resolved with `requiring-resolve` at call time when a
   symbol so a config reload rebinds cleanly. Rebinding replaces the prior value;
-  pass a valid binding after every weaver startup or config reload. `install!`
-  never binds a default. The binding is validated against `::tracker-binding`."
+  pass a valid binding after every weaver startup or config reload. Module
+  activation never binds a default. The binding is validated against
+  `::tracker-binding`."
   [tracker]
   (reset! (tracker-binding) (validate-tracker! tracker))
   {:tracker @(tracker-binding)})
@@ -1571,32 +1571,21 @@
         (runtime/spool-state runtime ::state {:version state-version} new-state)
         {:reconciled :applied})))
 
-(defn install!
-  "Install kanban directly for legacy trusted config.
+(def module
+  "Base module declaration datum for the kanban spool (ADR-003.P7).
 
-  Module config should use `contribute`/`reconcile`; this entry point retains
-  the pre-module API for existing workspaces."
-  []
-  (let [rt (current/runtime)]
-    {:installed true :namespace 'ct.spools.kanban
-     :vocab (vocab/declare! rt kanban-vocab)
-     :ops [(weaver/register-op! rt 'kanban kanban-op-options 'ct.spools.kanban/kanban-op)
-           (weaver/register-op! rt 'kanban-export kanban-export-op-options
-                                'ct.spools.kanban/kanban-export-op)]
-     :pattern (patterns/register-pattern! rt 'kanban-batch
-                                          "Create pending feature cards with bodies and depends-on edges."
-                                          'ct.spools.kanban/kanban-batch ::kanban-batch-input)
-     :queries [(graph/register-query! rt 'kanban-cards [:= [:attr "kanban/card"] "true"])
-               (graph/register-query! rt 'kanban-pending
-                                      [:and [:= :state "active"]
-                                       [:= [:attr "kanban/card"] "true"]
-                                       [:= [:attr "kanban/lane"] "pending"]])]}))
+  The authored `:ns`/`:contribute`/`:reconcile` triple every consumer starts
+  from: a consuming world assocs its `:spools` guards onto it, and bare-test
+  fixtures assoc `:load :image`. Every variant is `runtime/module!` input."
+  {:ns 'ct.spools.kanban
+   :contribute 'ct.spools.kanban/contribute
+   :reconcile 'ct.spools.kanban/reconcile})
 
 (defn install-peering!
   "Register the opt-in `kanban.send.v1` board-peering receive op.
 
-  A separate opt-in entry point wired into trusted config after
-  `(skein.spools.guild/install! runtime)` and `(install!)`. Delegates to
+  A separate opt-in entry point wired into trusted config after the guild
+  module and the kanban module are active. Delegates to
   `ct.spools.kanban.peering/install-peering!` via `requiring-resolve` so the base
   kanban spool never load-depends on the guild spool; peering (and its guild
   dependency) load only when a repo opts in."

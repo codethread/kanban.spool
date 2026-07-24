@@ -5,6 +5,7 @@
             [clojure.test :refer [deftest is testing]]
             [skein.api.graph.alpha :as graph]
             [skein.api.patterns.alpha :as patterns]
+            [skein.api.runtime.alpha :as runtime]
             [skein.api.vocab.alpha :as vocab]
             [skein.api.weaver.alpha :as weaver]
             [skein.api.format.alpha :as fmt]
@@ -37,19 +38,25 @@
     {:status nil :ready []}))
 
 (defn- with-kanban
-  "Run f with a fresh weaver runtime that has the kanban spool installed.
+  "Run f with a fresh weaver runtime that has the kanban module active.
 
   The runtime lifecycle and isolation come from the public author test helper
   (`skein.test.alpha/with-weaver-world`), with the runtime thread-bound so the
   spool's `current/runtime` resolution sees this world. kanban ships on this
-  repo's src classpath, so install! runs directly against the bound runtime."
+  repo's src classpath, so the exported datum activates in image mode. Throws
+  with the refresh result unless the module applied."
   [f]
   (t/run-with-weaver-world
    {:storage :sqlite-memory}
    (fn [ctx]
      (weaver-runtime/with-runtime-binding (:runtime ctx)
-       #(do (kanban/install!)
-            (f (:runtime ctx)))))))
+       #(let [rt (:runtime ctx)
+              result (runtime/module! rt :kanban (assoc kanban/module :load :image))
+              status (get-in result [:modules :kanban :status])]
+          (when-not (contains? #{:applied :unchanged} status)
+            (throw (ex-info "kanban module activation failed"
+                            {:module/key :kanban :module/status status :result result})))
+          (f rt))))))
 
 (defn- op! [rt & argv]
   (weaver/op! rt 'kanban argv))
@@ -92,13 +99,13 @@
         (is (= required @checked))
         (is (empty? (set/difference required @checked)))))))
 
-(deftest install-declares-kanban-attr-namespace
+(deftest activation-declares-kanban-attr-namespace
   (with-kanban
     (fn [rt]
       (let [decl (->> (vocab/declarations rt {:kind :attr-namespace})
                       (filter #(= "kanban" (:name %)))
                       first)]
-        (is (some? decl) "install! declares the kanban/* attribute namespace")
+        (is (some? decl) "module reconcile declares the kanban/* attribute namespace")
         (is (= :skein/spools-kanban (:owner decl))
             "kanban/* is owned by the single verified use-key :skein/spools-kanban")
         (is (every? #(str/starts-with? % "kanban/") (:keys decl))
@@ -977,7 +984,7 @@
                             (patterns/weave! rt :kanban-batch
                                              {:items [{:key "x" :title "X" :depends-on ["missing-strand"]}]}))))))
 
-(deftest install-registers-kanban-export-op
+(deftest activation-registers-kanban-export-op
   (with-kanban
     (fn [rt]
       (is (some #(= "kanban-export" (:name %)) (weaver/ops rt))))))
