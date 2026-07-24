@@ -112,7 +112,7 @@ A note may carry the primitive's `note/kind` decorating attr (`--kind <value>`) 
 
 ## CLI op
 
-Install registers one declared-subcommand operation. `strand help kanban` shows the machine-readable verb/flag surface; `strand help kanban task add` resolves the nested task-add leaf, including its `mutating` and `standard` classes. Bare `strand kanban` and unknown verbs fail loudly with the available subcommand names. The old `strand kanban help` form is retired; use the root `help` operation instead.
+Module activation registers one declared-subcommand operation. `strand help kanban` shows the machine-readable verb/flag surface; `strand help kanban task add` resolves the nested task-add leaf, including its `mutating` and `standard` classes. Bare `strand kanban` and unknown verbs fail loudly with the available subcommand names. The old `strand kanban help` form is retired; use the root `help` operation instead.
 
 ```sh
 strand kanban prime
@@ -165,7 +165,7 @@ printf "(do (require 'ct.spools.kanban) (ct.spools.kanban/print-board!))\n" | mi
 
 ## Offline export
 
-Install also registers `kanban-export`, a read-only op that bundles one card's full `parent-of` subtree plus its internal `depends-on` edges in a single call:
+Module activation also registers `kanban-export`, a read-only op that bundles one card's full `parent-of` subtree plus its internal `depends-on` edges in a single call:
 
 ```sh
 strand kanban-export <card-id>
@@ -355,7 +355,7 @@ stamped cards project as unbound. The consuming [README](./README.md) carries th
 
 ## Queries
 
-Install also registers:
+Module activation also registers:
 
 - `kanban-cards` — all kanban card strands.
 - `kanban-pending` — active cards with `kanban/lane=pending`.
