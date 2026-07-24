@@ -177,7 +177,7 @@ It returns the root, every strand beneath it via `parent-of` (all lifecycle stat
 
 ## Peering
 
-Board peering lets sibling weavers on one machine hand cards to each other's boards. It is **opt-in and off by default**: `install!` never touches it. A repo turns it on by registering a second entry point, `install-peering!`, from trusted config, which registers three ops — the `kanban.send.v1` guild receive op, and the local `kanban-peers` and `kanban-send` ops.
+Board peering lets sibling weavers on one machine hand cards to each other's boards. It is **opt-in and off by default**: base module activation never touches it. A repo turns it on by registering a second entry point, `install-peering!`, from trusted config, which registers three ops — the `kanban.send.v1` guild receive op, and the local `kanban-peers` and `kanban-send` ops.
 
 ### What travels, and what never does
 
@@ -286,7 +286,7 @@ exactly one seam. This mirrors chime's notifier binding: a vocabulary-agnostic e
 unbound, config supplies the implementation, and unbound use degrades honestly.
 
 **Binding.** Bind the strategy once per weaver lifetime (and again after every startup or config
-reload — `install!` never binds a default):
+reload — module activation never binds a default):
 
 ```clojure
 (kanban/set-tracker!

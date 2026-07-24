@@ -2,7 +2,7 @@
 // Render a kanban feature/epic card and its whole parent-of subtree to a single
 // self-contained HTML file: an overall progress rollup plus a per-child
 // breakdown of what work is involved and how far along it is. Data comes from
-// the `strand kanban-export <id>` op (registered by the kanban spool's install!),
+// the `strand kanban-export <id>` op (contributed by the kanban spool's module),
 // which bundles the card subtree, its parent-of hierarchy, and the depends-on
 // edges internal to that subtree in one JSON call. Everything else here is
 // pure presentation, so the tool stays a single dependency-free file.
