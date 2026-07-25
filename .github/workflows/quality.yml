@@ -13,6 +13,15 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: kanban.spool
+      # Keep Skein unpinned: spool repos are developed against a sibling Skein
+      # checkout at main, so CI should catch breaking Skein changes early. Pin
+      # here if that ever proves too noisy.
+      - uses: actions/checkout@v4
+        with:
+          repository: codethread/skein
+          path: skein-src
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -21,6 +30,7 @@ jobs:
         with:
           cli: latest
       - run: clojure -M:test
+        working-directory: kanban.spool
 
   format-check:
     name: Format check
