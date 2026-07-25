@@ -1,8 +1,11 @@
 # Publishes the mkdocs-material site to GitHub Pages on every push to main.
 #
-# This workflow enables the native GitHub Actions Pages flow on its first run,
-# then deploys via configure-pages / upload-pages-artifact / deploy-pages. The
-# site is served from
+# HUMAN SETUP REQUIRED: this workflow deploys via the native GitHub Actions
+# Pages flow (configure-pages / upload-pages-artifact / deploy-pages), which
+# requires the repo's Settings -> Pages -> "Build and deployment" source to be
+# set to "GitHub Actions" (it defaults to "Deploy from a branch"). Until a
+# repo admin flips that setting, the deploy job will fail even though this
+# workflow runs. Once enabled, the site is served from
 # https://codethread.github.io/kanban.spool/.
 name: Deploy Docs
 
@@ -29,8 +32,6 @@ jobs:
       - uses: astral-sh/setup-uv@v8.2.0
       - run: make docs-site
       - uses: actions/configure-pages@v4
-        with:
-          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
