@@ -15,6 +15,9 @@ pom.xml.asc
 .idea/
 .DS_Store
 
+# mkdocs build output; the site is published from the sources, never committed
+site/
+
 scripts/kanban-export/node_modules/
 # kanban-export writes to /tmp by default; ignore any local --out overrides too
 /kanban-*.html

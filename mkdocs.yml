@@ -1,0 +1,54 @@
+site_name: kanban.spool Docs
+site_description: Source documentation projection for the ct.spools.kanban board
+site_url: ""
+docs_dir: .mkdocs
+site_dir: site
+
+repo_url: https://github.com/codethread/kanban.spool
+repo_name: codethread/kanban.spool
+
+# Rewrites repo-relative links that leave the docs collection (source files,
+# scripts) to GitHub blob URLs, so builds can run --strict and every remaining
+# warning is a genuinely broken link.
+hooks:
+  - scripts/mkdocs_hooks.py
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  # The homepage is the repository README, which is written in GitHub-flavored
+  # markdown: md_in_html renders the fenced code inside its <details markdown>
+  # dropdowns, gfm_admonition renders its > [!NOTE] alerts.
+  - md_in_html
+  - gfm_admonition
+
+nav:
+  # The root landing page is the repository README (.mkdocs/index.md symlinks
+  # it), so the site opens on the same pitch as GitHub.
+  - Home: index.md
+  - Contract: kanban.md
+  - Cookbook: kanban.cookbook.md
+  # Generated per-var reference; the behavior contract remains kanban.md above.
+  - API:
+      - ct.spools.kanban: kanban.api.md
+      - ct.spools.kanban.peering: kanban.peering.api.md
