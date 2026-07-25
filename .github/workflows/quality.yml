@@ -65,9 +65,19 @@ jobs:
       - uses: astral-sh/setup-uv@v8.2.0
       - run: make docs-check
 
+  actionlint:
+    name: GitHub Actions workflow lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 ./.github/workflows/quality.yml ./.github/workflows/pages.yml
+
   quality-gate:
     name: Quality gate
-    needs: [clojure-test, format-check, lint, docs-check]
+    needs: [clojure-test, format-check, lint, docs-check, actionlint]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -76,3 +86,4 @@ jobs:
           test "${{ needs.format-check.result }}" != failure
           test "${{ needs.lint.result }}" != failure
           test "${{ needs.docs-check.result }}" != failure
+          test "${{ needs.actionlint.result }}" != failure
