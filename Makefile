@@ -1,17 +1,4 @@
-.PHONY: fmt fmt-check lint test kanban-export kanban-serve
-
-fmt:
-	clojure -M:format/fix
-
-fmt-check:
-	clojure -M:format
-
-lint:
-	clojure -M:lint/clj-kondo
-	clojure -M:lint/splint
-
-test:
-	clojure -M:test
+.PHONY: kanban-export kanban-serve
 
 # Standalone HTML export of a feature/epic card subtree; polls the strand CLI.
 # Pass the card id as ID and any extra flags (--out, --workspace, --open) as ARGS,
@@ -34,3 +21,8 @@ kanban-serve:
 	printf '\n  file: %s\n  port: %s\n  url:  http://%s:%s/kanban-%s.html\n\n  serving %s — Ctrl-C to stop\n\n' \
 		"$$file" "$$port" "$$ip" "$$port" "$(ID)" "$(KANBAN_EXPORT_DIR)"; \
 	python3 -m http.server "$$port" --bind 0.0.0.0 --directory "$(KANBAN_EXPORT_DIR)"
+
+# Generic targets live in one fragment per concern (quality, docs) so each can be
+# owned and updated independently of this repo-specific file. Leading dash: a
+# checkout missing a fragment still builds the targets above.
+-include make/*.mk
