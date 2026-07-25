@@ -2,7 +2,9 @@
 
 QUICKDOC_DEPS := '{:deps {io.github.borkdude/quickdoc {:git/tag "v0.2.6" :git/sha "ce86780"}}}'
 QUICKDOC_SCRIPT := scripts/generate_api_docs.clj
-MKDOCS := uvx --from mkdocs --with mkdocs-material --with markdown-gfm-admonition mkdocs
+# Pin the proven toolchain so an upstream MkDocs 2.0 release cannot break every
+# propagated docs pipeline unexpectedly.
+MKDOCS := uvx --from mkdocs==1.6.1 --with mkdocs-material==9.7.7 --with markdown-gfm-admonition==0.3.0 mkdocs
 
 # Regenerate the *.api.md pages from source docstrings. bb starts far faster
 # than a JVM, so use it when present; the clojure fallback keeps the target
