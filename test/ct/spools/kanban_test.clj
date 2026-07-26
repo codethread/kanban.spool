@@ -11,7 +11,6 @@
             [skein.api.weaver.alpha :as weaver]
             [skein.api.format.alpha :as fmt]
             [skein.api.spool.alpha :as spool]
-            [skein.core.weaver.runtime :as weaver-runtime]
             [ct.spools.kanban :as kanban]
             [ct.spools.kanban-peering-test]
             [skein.test.alpha :as t]))
@@ -21,6 +20,20 @@
           :reconcile 'reconcile}
          kanban/spool))
   (is (s/valid? ::spool/spool kanban/spool)))
+
+(deftest explicit-runtime-apis-isolate-unpublished-worlds
+  (t/run-with-weaver-world
+   {:storage :sqlite-memory}
+   (fn [left]
+     (t/run-with-weaver-world
+      {:storage :sqlite-memory}
+      (fn [right]
+        (let [left-runtime (:runtime left)
+              right-runtime (:runtime right)]
+          (kanban/add! left-runtime "Left only" {})
+          (kanban/add! right-runtime "Right only" {})
+          (is (= ["Left only"] (mapv :title (:pending (kanban/board left-runtime)))))
+          (is (= ["Right only"] (mapv :title (:pending (kanban/board right-runtime)))))))))))
 
 (deftest exact-entity-projections-discard-extra-fields-and-fail-loudly
   (let [strand {:id "s1" :title "Work" :state "active"
@@ -37,7 +50,7 @@
   Returns a canned projection for `widgets-run`, an empty projection for any
   other run id (the tracker's honest \"no active run\" report), and carries an
   extra step key so the tests can prove kanban trims steps to its own key set."
-  [run-id]
+  [_runtime run-id]
   (if (= "widgets-run" run-id)
     {:status "spec"
      :ready [{:id "s1" :title "Draft spec" :role "step" :stage "spec"
@@ -48,23 +61,21 @@
   "Run f with a fresh weaver runtime that has the kanban module active.
 
   The runtime lifecycle and isolation come from the public author test helper
-  (`skein.test.alpha/with-weaver-world`), with the runtime thread-bound so the
-  spool's `current/runtime` resolution sees this world. kanban ships on this
-  repo's src classpath, so it activates in image mode from a declaration that
+  (`skein.test.alpha/with-weaver-world`). kanban ships on this repo's src
+  classpath, so it activates in image mode from a declaration that
   names only the namespace; the entry points come from kanban's own `spool`
   var. Throws with the refresh result unless the module applied."
   [f]
   (t/run-with-weaver-world
    {:storage :sqlite-memory}
    (fn [ctx]
-     (weaver-runtime/with-runtime-binding (:runtime ctx)
-       #(let [rt (:runtime ctx)
-              result (runtime/module! rt :kanban {:ns 'ct.spools.kanban :load :image})
-              status (get-in result [:modules :kanban :status])]
-          (when-not (contains? #{:applied :unchanged} status)
-            (throw (ex-info "kanban module activation failed"
-                            {:module/key :kanban :module/status status :result result})))
-          (f rt))))))
+     (let [rt (:runtime ctx)
+           result (runtime/module! rt :kanban {:ns 'ct.spools.kanban :load :image})
+           status (get-in result [:modules :kanban :status])]
+       (when-not (contains? #{:applied :unchanged} status)
+         (throw (ex-info "kanban module activation failed"
+                         {:module/key :kanban :module/status status :result result})))
+       (f rt)))))
 
 (defn- op! [rt & argv]
   (weaver/op! rt 'kanban argv))
@@ -134,7 +145,7 @@
   (with-kanban
     (fn [rt]
       (let [detail (weaver/resolve-op rt 'kanban)
-            manual-entries (-> (kanban/about) :commands)
+            manual-entries (-> (kanban/about rt) :commands)
             manual-commands (set (keep :verb manual-entries))
             declared-commands (set (keys (get-in detail [:arg-spec :subcommands])))]
         (is (every? #(or (:verb %) (:repl %)) manual-entries)
@@ -231,7 +242,7 @@
     (fn [rt]
       (let [prime (op! rt "prime")
             about (op! rt "about")]
-        (is (not (contains? (kanban/prime) :operation)))
+        (is (not (contains? (kanban/prime rt) :operation)))
         (testing "prime reuses about's command/lane/attribute surface"
           (is (= (:commands about) (:commands prime)))
           (is (= (:lanes about) (:lanes prime)))
@@ -838,7 +849,7 @@
           (let [claimed (op! rt "claim" card-id "--owner" "agent" "--branch" "widgets"
                              "--run-id" "widgets-run")]
             (is (= "widgets-run" (get-in claimed [:card :attributes :kanban/run-id])))))
-        (kanban/set-tracker! {:name "stub" :project stub-projection})
+        (kanban/set-tracker! rt {:name "stub" :project stub-projection})
         (testing "a bound tracker joins the run's status and trimmed ready steps"
           (let [{:keys [name run-id status ready]} (:tracker (op! rt "card" card-id))]
             (is (= "stub" name))
@@ -873,7 +884,7 @@
     (fn [rt]
       (let [card-id (get-in (op! rt "add" "Symbol-tracked feature") [:card :id])]
         (op! rt "claim" card-id "--owner" "agent" "--branch" "widgets" "--run-id" "widgets-run")
-        (kanban/set-tracker! {:name "stub" :project 'ct.spools.kanban-test/stub-projection})
+        (kanban/set-tracker! rt {:name "stub" :project 'ct.spools.kanban-test/stub-projection})
         (let [{:keys [name status ready]} (:tracker (op! rt "card" card-id))]
           (is (= "stub" name))
           (is (= "spec" status))
@@ -881,17 +892,17 @@
 
 (deftest kanban-set-tracker-rejects-a-malformed-binding
   (with-kanban
-    (fn [_rt]
+    (fn [rt]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"must be a map"
-                            (kanban/set-tracker! "not-a-map")))
+                            (kanban/set-tracker! rt "not-a-map")))
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"unknown keys"
-                            (kanban/set-tracker! {:name "x" :project stub-projection :surprise true})))
+                            (kanban/set-tracker! rt {:name "x" :project stub-projection :surprise true})))
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #":name must be a non-blank string"
-                            (kanban/set-tracker! {:name "" :project stub-projection})))
+                            (kanban/set-tracker! rt {:name "" :project stub-projection})))
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #":project must be a fully-qualified symbol or a function"
-                            (kanban/set-tracker! {:name "x" :project "nope"})))
+                            (kanban/set-tracker! rt {:name "x" :project "nope"})))
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #":project must be a fully-qualified symbol or a function"
-                            (kanban/set-tracker! {:name "x" :project 'bare-symbol}))))))
+                            (kanban/set-tracker! rt {:name "x" :project 'bare-symbol}))))))
 
 (deftest kanban-card-view-validates-and-propagates-tracker-failures
   (with-kanban
@@ -901,7 +912,7 @@
         (op! rt "claim" bad-id "--owner" "a" "--branch" "b" "--run-id" "widgets-run")
         (op! rt "claim" boom-id "--owner" "a" "--branch" "c" "--run-id" "widgets-run")
         (testing "a non-map projection result fails loudly"
-          (kanban/set-tracker! {:name "bad" :project (fn [_] "not-a-map")})
+          (kanban/set-tracker! rt {:name "bad" :project (fn [_runtime _run-id] "not-a-map")})
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"projection does not match its owning spec"
                                 (op! rt "card" bad-id))))
         (testing "missing or malformed projection fields fail loudly"
@@ -912,12 +923,15 @@
                               {:status nil :ready [{}]}
                               {:status nil :ready [{:id "s1" :title "" :role "step"}]}
                               {:status nil :ready [] :surprise true}]]
-            (kanban/set-tracker! {:name "malformed" :project (fn [_] projection)})
+            (kanban/set-tracker! rt {:name "malformed" :project (fn [_runtime _run-id] projection)})
             (is (thrown-with-msg? clojure.lang.ExceptionInfo
                                   #"projection does not match its owning spec"
                                   (op! rt "card" bad-id)))))
         (testing "a throwing strategy propagates rather than being masked"
-          (kanban/set-tracker! {:name "boom" :project (fn [_] (throw (ex-info "tracker exploded" {})))})
+          (kanban/set-tracker! rt
+                               {:name "boom"
+                                :project (fn [_runtime _run-id]
+                                           (throw (ex-info "tracker exploded" {})))})
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"tracker exploded"
                                 (op! rt "card" boom-id))))))))
 
@@ -939,7 +953,7 @@
       (testing "with no binding, about states none is bound"
         (is (re-find #"No tracker bound" (:tracker (op! rt "about")))))
       (testing "after set-tracker!, about names the bound tracker"
-        (kanban/set-tracker! {:name "devflow" :project stub-projection})
+        (kanban/set-tracker! rt {:name "devflow" :project stub-projection})
         (is (re-find #"devflow" (:tracker (op! rt "about"))))))))
 
 (deftest state-shape-matches-declared-version

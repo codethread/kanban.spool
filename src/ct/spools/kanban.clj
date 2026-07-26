@@ -19,7 +19,6 @@
   `latest-note`."
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
-            [skein.api.current.alpha :as current]
             [skein.api.notes.alpha :as notes]
             [skein.api.graph.alpha :as graph]
             [skein.api.vocab.alpha :as vocab]
@@ -137,8 +136,8 @@
 
 (defn- card-strand
   "Return id's kanban card strand, failing loudly if it is absent or not a card."
-  [id]
-  (let [strand (or (weaver/show (current/runtime) id)
+  [runtime id]
+  (let [strand (or (weaver/show runtime id)
                    (throw (ex-info "Kanban strand not found" {:id id})))]
     (when-not (= "true" (attr-value strand card-attr))
       (throw (ex-info "Strand is not a kanban card" {:id id :attributes (:attributes strand)})))
@@ -146,8 +145,8 @@
 
 (defn- epic-strand
   "Return id's epic card strand, failing loudly for non-epic cards."
-  [id]
-  (let [strand (card-strand id)]
+  [runtime id]
+  (let [strand (card-strand runtime id)]
     (when-not (= "epic" (card-type strand))
       (throw (ex-info "Strand is not an epic card" {:id id :type (card-type strand)})))
     strand))
@@ -157,8 +156,8 @@
 
   Only features bear tasks; an epic parent fails here rather than silently
   parenting a task under the wrong tier."
-  [id]
-  (let [strand (card-strand id)]
+  [runtime id]
+  (let [strand (card-strand runtime id)]
     (when-not (= "feature" (card-type strand))
       (throw (ex-info "Strand is not a feature card" {:id id :type (card-type strand)})))
     strand))
@@ -168,17 +167,16 @@
 
   `--type epic` creates a grouping epic; `--epic <id>` hangs a new feature
   under an existing epic with a parent-of edge."
-  [title flags]
+  [runtime title flags]
   (let [title (require-non-blank! :title title)
-        rt (current/runtime)
         epic-id (get flags "--epic")]
     (when (and epic-id (= "epic" (get flags "--type")))
       (throw (ex-info "kanban epics cannot nest under other epics" {:epic epic-id})))
-    (let [epic (some-> epic-id epic-strand)
-          strand (weaver/add! rt {:title title
-                                  :attributes (card-attributes flags)})]
+    (let [epic (when epic-id (epic-strand runtime epic-id))
+          strand (weaver/add! runtime {:title title
+                                       :attributes (card-attributes flags)})]
       (when epic
-        (weaver/update! rt (:id epic) {:edges [{:type "parent-of" :to (:id strand)}]}))
+        (weaver/update! runtime (:id epic) {:edges [{:type "parent-of" :to (:id strand)}]}))
       (cond-> {:operation "kanban add"
                :card (entity-projection strand)}
         epic (assoc :epic (:id epic))))))
@@ -269,29 +267,29 @@
   and `claim!`) each patch only their own keys instead of overwriting the whole
   attribute map from a possibly-stale read. `weaver/update` returns the full merged
   strand, so callers still see every attribute in the result."
-  [strand attrs state]
-  (weaver/update! (current/runtime)
+  [runtime strand attrs state]
+  (weaver/update! runtime
                   (:id strand)
                   (cond-> {:attributes attrs}
                     state (assoc :state state))))
 
 (defn promote!
   "Move a refinement card into the pending lane (an explicit human act)."
-  [id]
-  (let [strand (require-lane! "promote" (card-strand (require-non-blank! :id id)) "refinement")
-        updated (update-card! strand {lane-attr "pending"} nil)]
+  [runtime id]
+  (let [strand (require-lane! "promote" (card-strand runtime (require-non-blank! :id id)) "refinement")
+        updated (update-card! runtime strand {lane-attr "pending"} nil)]
     {:operation "kanban promote"
      :card (entity-projection updated)}))
 
 (defn set-priority!
   "Set an active card's priority (p1 highest urgency .. p4 someday)."
-  [id priority]
-  (let [strand (card-strand (require-non-blank! :id id))
+  [runtime id priority]
+  (let [strand (card-strand runtime (require-non-blank! :id id))
         priority (require-priority! priority)]
     (when-not (= "active" (:state strand))
       (throw (ex-info "Kanban card must be active to reprioritise"
                       {:id (:id strand) :state (:state strand)})))
-    (let [updated (update-card! strand {priority-attr priority} nil)]
+    (let [updated (update-card! runtime strand {priority-attr priority} nil)]
       {:operation "kanban priority"
        :card (entity-projection updated)})))
 
@@ -309,8 +307,8 @@
   main checkout has no separate worktree). `--run-id` optionally names the card's
   tracker run so `kanban card` can join the bound tracker's status and ready
   steps. Epics group work and are never claimed themselves."
-  [id flags]
-  (let [strand (require-lane! "claim" (card-strand (require-non-blank! :id id)) "pending")]
+  [runtime id flags]
+  (let [strand (require-lane! "claim" (card-strand runtime (require-non-blank! :id id)) "pending")]
     (when (= "epic" (card-type strand))
       (throw (ex-info "Kanban epics cannot be claimed; claim a feature under the epic"
                       {:id (:id strand)})))
@@ -322,23 +320,23 @@
                          :branch branch}
                   (get flags "--worktree") (assoc :worktree (get flags "--worktree"))
                   run (assoc run-id-attr run))
-          updated (update-card! strand attrs nil)]
+          updated (update-card! runtime strand attrs nil)]
       {:operation "kanban claim"
        :card (entity-projection updated)})))
 
 (defn review!
   "Move a claimed kanban card into the in_review lane."
-  [id]
-  (let [strand (require-lane! "mark in_review" (card-strand (require-non-blank! :id id)) "claimed")
-        updated (update-card! strand {lane-attr "in_review"} nil)]
+  [runtime id]
+  (let [strand (require-lane! "mark in_review" (card-strand runtime (require-non-blank! :id id)) "claimed")
+        updated (update-card! runtime strand {lane-attr "in_review"} nil)]
     {:operation "kanban review"
      :card (entity-projection updated)}))
 
 (defn rework!
   "Move an in_review kanban card back to claimed for rework."
-  [id]
-  (let [strand (require-lane! "rework" (card-strand (require-non-blank! :id id)) "in_review")
-        updated (update-card! strand {lane-attr "claimed"} nil)]
+  [runtime id]
+  (let [strand (require-lane! "rework" (card-strand runtime (require-non-blank! :id id)) "in_review")
+        updated (update-card! runtime strand {lane-attr "claimed"} nil)]
     {:operation "kanban rework"
      :card (entity-projection updated)}))
 
@@ -359,11 +357,11 @@
 
 (defn- finish-feature!
   "Close a claimed or in_review feature card with an explicit outcome."
-  [id strand outcome]
+  [runtime id strand outcome]
   (when-not (contains? #{"claimed" "in_review"} (attr-value strand lane-attr))
     (throw (ex-info "Kanban card must be claimed or in_review to finish"
                     {:id id :lane (attr-value strand lane-attr)})))
-  (let [updated (update-card! strand {lane-attr nil outcome-attr outcome} "closed")]
+  (let [updated (update-card! runtime strand {lane-attr nil outcome-attr outcome} "closed")]
     {:operation "kanban finish"
      :card (entity-projection updated)}))
 
@@ -382,7 +380,7 @@
                                               {:id (:id child)
                                                :lane (attr-value child lane-attr)})
                                             open)})))
-    (let [updated (update-card! strand {lane-attr nil outcome-attr "done"} "closed")]
+    (let [updated (update-card! rt strand {lane-attr nil outcome-attr "done"} "closed")]
       {:operation "kanban finish"
        :card (entity-projection updated)})))
 
@@ -397,12 +395,12 @@
   [rt strand]
   (let [cascaded (filterv #(not= "closed" (:state %)) (direct-feature-children rt strand))]
     (doseq [child cascaded]
-      (update-card! child
+      (update-card! rt child
                     {restore-lane-attr (attr-value child lane-attr)
                      lane-attr nil
                      outcome-attr "abandoned"}
                     "closed"))
-    (let [updated (update-card! strand
+    (let [updated (update-card! rt strand
                                 {restore-lane-attr (attr-value strand lane-attr)
                                  lane-attr nil
                                  outcome-attr "abandoned"}
@@ -438,16 +436,15 @@
   feature child, recording each transitioned card's lane in
   `kanban/abandon-restore-lane` so `kanban reopen` can reverse exactly what the
   abandon closed."
-  [id flags]
+  [runtime id flags]
   (let [id (require-non-blank! :id id)
-        rt (current/runtime)
-        strand (card-strand id)
+        strand (card-strand runtime id)
         outcome (or (get flags "--outcome") "done")]
     (when-not (= "active" (:state strand))
       (throw (ex-info "Kanban card must be active to finish" {:id id :state (:state strand)})))
     (if (= "epic" (card-type strand))
-      (finish-epic! rt id strand outcome)
-      (finish-feature! id strand outcome))))
+      (finish-epic! runtime id strand outcome)
+      (finish-feature! runtime id strand outcome))))
 
 (defn- validated-restore-lane
   "Return card's stored `kanban/abandon-restore-lane`, failing loudly on a bad marker.
@@ -474,10 +471,9 @@
   own stored restore lane; a child closed before the abandon (no marker) was
   legitimately done and stays closed. Reopen is a true inverse, never a blanket
   reopen."
-  [id]
+  [runtime id]
   (let [id (require-non-blank! :id id)
-        rt (current/runtime)
-        strand (epic-strand id)]
+        strand (epic-strand runtime id)]
     (when-not (= "closed" (:state strand))
       (throw (ex-info "Kanban epic must be closed to reopen" {:id id :state (:state strand)})))
     (when-not (= "abandoned" (attr-value strand outcome-attr))
@@ -485,16 +481,16 @@
                       {:id id :outcome (attr-value strand outcome-attr)})))
     (let [cascaded (filterv #(and (= "closed" (:state %))
                                   (some? (attr-value % restore-lane-attr)))
-                            (direct-feature-children rt strand))
+                            (direct-feature-children runtime strand))
           epic-restore-lane (validated-restore-lane strand)
           child-restore-lanes (mapv validated-restore-lane cascaded)]
       (doseq [[child lane] (map vector cascaded child-restore-lanes)]
-        (update-card! child
+        (update-card! runtime child
                       {lane-attr lane
                        outcome-attr nil
                        restore-lane-attr nil}
                       "active"))
-      (let [updated (update-card! strand
+      (let [updated (update-card! runtime strand
                                   {lane-attr epic-restore-lane
                                    outcome-attr nil
                                    restore-lane-attr nil}
@@ -623,37 +619,35 @@
   `--depends-on <id>` is repeatable and lays the same `depends-on` edges that
   are the concurrency DAG and drive the derived `blocked`/`ready` split; task
   status is never stored."
-  [feature-id title flags]
-  (let [feature (feature-strand (require-non-blank! :feature feature-id))
+  [runtime feature-id title flags]
+  (let [feature (feature-strand runtime (require-non-blank! :feature feature-id))
         title (require-non-blank! :title title)
-        rt (current/runtime)
         deps (get flags "--depends-on")
-        task (weaver/add! rt {:title title
-                              :attributes (cond-> {task-attr "true"
-                                                   :kind "task"}
-                                            (get flags "--body") (assoc :body (get flags "--body")))})]
-    (weaver/update! rt (:id feature) {:edges [{:type "parent-of" :to (:id task)}]})
+        task (weaver/add! runtime {:title title
+                                   :attributes (cond-> {task-attr "true"
+                                                        :kind "task"}
+                                                 (get flags "--body") (assoc :body (get flags "--body")))})]
+    (weaver/update! runtime (:id feature) {:edges [{:type "parent-of" :to (:id task)}]})
     (when (seq deps)
-      (weaver/update! rt (:id task) {:edges (mapv (fn [dep] {:type "depends-on" :to dep}) deps)}))
+      (weaver/update! runtime (:id task) {:edges (mapv (fn [dep] {:type "depends-on" :to dep}) deps)}))
     {:operation "kanban task add"
      :feature (:id feature)
-     :task (entity-projection (weaver/show rt (:id task)))}))
+     :task (entity-projection (weaver/show runtime (:id task)))}))
 
 (defn task-list
   "Project a feature card's tasks with their derived statuses."
-  [feature-id]
-  (let [rt (current/runtime)
-        feature (feature-strand (require-non-blank! :feature feature-id))]
+  [runtime feature-id]
+  (let [feature (feature-strand runtime (require-non-blank! :feature feature-id))]
     {:operation "kanban task list"
      :feature (:id feature)
-     :tasks (tasks-with-status rt (feature-tasks rt (:id feature)))}))
+     :tasks (tasks-with-status runtime (feature-tasks runtime (:id feature)))}))
 
 (defn task-op
   "Dispatch a parsed `kanban task ...` action, failing loudly on an unknown one."
-  [{:keys [feature title subcommand]} flags]
+  [runtime {:keys [feature title subcommand]} flags]
   (case subcommand
-    ["task" "add"] (task-add! feature (str/join " " title) flags)
-    ["task" "list"] (task-list feature)
+    ["task" "add"] (task-add! runtime feature (str/join " " title) flags)
+    ["task" "list"] (task-list runtime feature)
     (throw (ex-info "kanban task action must be add or list"
                     {:subcommand subcommand :allowed [["task" "add"] ["task" "list"]]}))))
 
@@ -667,8 +661,8 @@
   Notes target the work tier only: progress notes belong on the doing-task
   (the resume read) and card notes stay a lean handover trail. Any other
   strand is a wrong target."
-  [id]
-  (let [strand (or (weaver/show (current/runtime) id)
+  [runtime id]
+  (let [strand (or (weaver/show runtime id)
                    (throw (ex-info "Kanban strand not found" {:id id})))]
     (when-not (or (= "true" (attr-value strand card-attr))
                   (= "true" (attr-value strand task-attr)))
@@ -696,22 +690,21 @@
   card notes to lean handover summaries. `--kind` stamps the open `note/kind`
   view hint (blessed values: activity, decision, review-dump, summary). A
   task note reports its owning card alongside the task when one parents it."
-  [id text flags]
-  (let [target (note-target (require-non-blank! :id id))
+  [runtime id text flags]
+  (let [target (note-target runtime (require-non-blank! :id id))
         text (require-non-blank! :text text)
-        rt (current/runtime)
         decorating (cond-> {}
                      (get flags "--by") (assoc :by (get flags "--by"))
                      (get flags "--kind") (assoc note-kind-attr
                                                  (require-non-blank! :kind
                                                                      (get flags "--kind"))))
-        {note-id :id} (notes/note! rt (:id target) text decorating)
-        note (weaver/show rt note-id)
+        {note-id :id} (notes/note! runtime (:id target) text decorating)
+        note (weaver/show runtime note-id)
         result {:operation "kanban note"
                 :strand (entity-projection note)}]
     (if (= "true" (attr-value target card-attr))
       (assoc result :card (:id target))
-      (let [card (owning-card rt target)]
+      (let [card (owning-card runtime target)]
         (cond-> (assoc result :task (:id target))
           card (assoc :card (:id card)))))))
 
@@ -838,10 +831,10 @@
 (defn- new-state []
   {:tracker-binding (atom nil)})
 
-(defn- state []
-  (runtime/spool-state (current/runtime) ::state {:version state-version} new-state))
+(defn- state [runtime]
+  (runtime/spool-state runtime ::state {:version state-version} new-state))
 
-(defn- tracker-binding [] (:tracker-binding (state)))
+(defn- tracker-binding [runtime] (:tracker-binding (state runtime)))
 
 (defn- validate-tracker!
   "Return tracker when it satisfies `::tracker-binding`, failing loudly otherwise.
@@ -871,14 +864,15 @@
   The binding is `{:name <non-blank-string> :project <fq-symbol-or-fn>}`. `:name`
   surfaces in `about` and the card view so a cold agent knows which convention
   the projected steps follow; `:project` is `(fn [run-id] -> {:status <string|nil>
-  :ready [step ...]})`, resolved with `requiring-resolve` at call time when a
+  :ready [step ...]})`, called as `(project runtime run-id)` and resolved with
+  `requiring-resolve` at call time when a
   symbol so a config reload rebinds cleanly. Rebinding replaces the prior value;
   pass a valid binding after every weaver startup or config reload. Module
   activation never binds a default. The binding is validated against
   `::tracker-binding`."
-  [tracker]
-  (reset! (tracker-binding) (validate-tracker! tracker))
-  {:tracker @(tracker-binding)})
+  [runtime tracker]
+  (reset! (tracker-binding runtime) (validate-tracker! tracker))
+  {:tracker @(tracker-binding runtime)})
 
 (def ^:private tracker-step-keys
   "Closed key set kanban projects from each tracker step, keeping the card-view
@@ -948,13 +942,13 @@
   strategy propagates: the binding is repo-owner config, and masking its failure
   would violate TEN-003. The strategy result is validated against
   `::tracker-projection`; the returned public shape is `::tracker-view`."
-  [card]
+  [runtime card]
   (when-let [run (card-run-id card)]
     (validate-tracker-view!
      card
-     (if-let [binding @(tracker-binding)]
+     (if-let [binding @(tracker-binding runtime)]
        (let [projection (validate-projection!
-                         binding run ((resolve-project (:project binding)) run))]
+                         binding run ((resolve-project (:project binding)) runtime run))]
          {:name (:name binding)
           :run-id run
           :status (:status projection)
@@ -969,21 +963,20 @@
   four derived statuses (empty for cards that carry no task tier), and
   `:tracker` joins the bound tracker's run status and ready steps for cards
   stamped with `kanban/run-id` (see `tracker-join`)."
-  [id]
-  (let [rt (current/runtime)
-        card (card-strand (require-non-blank! :id id))
-        {:keys [notes work]} (card-subtree rt card)
+  [runtime id]
+  (let [card (card-strand runtime (require-non-blank! :id id))
+        {:keys [notes work]} (card-subtree runtime card)
         active-work (filterv #(= "active" (:state %)) work)
         work-ids (set (map :id active-work))
-        ready (filterv #(contains? work-ids (:id %)) (weaver/ready rt))
-        tracker (tracker-join card)]
+        ready (filterv #(contains? work-ids (:id %)) (weaver/ready runtime))
+        tracker (tracker-join runtime card)]
     (cond-> {:operation "kanban card"
              :card (select-keys card [:id :title :state :attributes :created_at :updated_at])
-             :tasks (tasks-with-status rt (feature-tasks rt (:id card)))
+             :tasks (tasks-with-status runtime (feature-tasks runtime (:id card)))
              :notes (mapv compact-note notes)
              :active-work (mapv summarize-strand active-work)
              :ready (mapv summarize-strand ready)
-             :related (card-relations rt (:id card))}
+             :related (card-relations runtime (:id card))}
       tracker (assoc :tracker tracker))))
 
 ;; ---------------------------------------------------------------------------
@@ -992,8 +985,8 @@
 
 (defn- cards
   "Return all kanban card strands."
-  []
-  (weaver/list (current/runtime) [:= [:attr "kanban/card"] "true"] {}))
+  [runtime]
+  (weaver/list runtime [:= [:attr "kanban/card"] "true"] {}))
 
 (defn- by-created
   "Return strands sorted oldest first."
@@ -1007,8 +1000,8 @@
 
 (defn next-card
   "Return the highest-priority (p1 first) oldest active pending feature card, or nil."
-  []
-  (some->> (cards)
+  [runtime]
+  (some->> (cards runtime)
            (filter #(and (= "active" (:state %))
                          (= "pending" (attr-value % lane-attr))
                          (= "feature" (card-type %))))
@@ -1066,15 +1059,14 @@
   one call who is working where and how to pick up interrupted work.
   `:needs-review` aggregates the human-review frontier across claimed and
   in-review cards."
-  []
-  (let [rt (current/runtime)
-        all (cards)
+  [runtime]
+  (let [all (cards runtime)
         active (filter #(= "active" (:state %)) all)
         epics (filterv #(= "epic" (card-type %)) active)
         features (remove #(= "epic" (card-type %)) active)
         claimed-features (filter #(= "claimed" (attr-value % lane-attr)) features)
         review-features (filter #(= "in_review" (attr-value % lane-attr)) features)
-        membership (epic-membership rt epics)
+        membership (epic-membership runtime epics)
         with-epic (fn [card]
                     (cond-> (compact-card card)
                       (membership (:id card)) (assoc :epic (membership (:id card)))))
@@ -1094,15 +1086,15 @@
              :pending (lane "pending")
              :claimed (mapv (fn [card]
                               (cond-> (with-epic card)
-                                (doing-task-for rt card)
-                                (assoc :doing-task (doing-task-for rt card))))
+                                (doing-task-for runtime card)
+                                (assoc :doing-task (doing-task-for runtime card))))
                             (by-priority claimed-features))
              :in_review (mapv (fn [card]
                                 (cond-> (with-epic card)
-                                  (doing-task-for rt card)
-                                  (assoc :doing-task (doing-task-for rt card))))
+                                  (doing-task-for runtime card)
+                                  (assoc :doing-task (doing-task-for runtime card))))
                               (by-priority review-features))
-             :needs-review (needs-review-entries rt (concat claimed-features review-features))
+             :needs-review (needs-review-entries runtime (concat claimed-features review-features))
              :closed {:count (count (filter #(= "closed" (:state %)) all))}}
       ;; active cards outside the known lanes are drift; surface them loudly
       (seq unknown) (assoc :unknown-lane unknown))))
@@ -1182,12 +1174,12 @@
 
 (defn print-board!
   "Print the live board as ASCII; the human view for `mill weaver repl`."
-  []
-  (println (board-str (board))))
+  [runtime]
+  (println (board-str (board runtime))))
 
 (defn about
   "Return the kanban convention and installed helper surface."
-  []
+  [runtime]
   {:summary "Kanban cards are the user<->agent work board; agents working directly with a user work under a claimed card."
    :lanes {:refinement "not actionable until an explicit human `kanban promote`"
            :pending "actionable queue; `kanban next` serves the highest-priority (p1 first) oldest feature"
@@ -1210,7 +1202,7 @@
                 :owner "claimant, required at claim"
                 :branch "work branch, required at claim"
                 :worktree "optional worktree path"}
-   :tracker (if-let [bound @(tracker-binding)]
+   :tracker (if-let [bound @(tracker-binding runtime)]
               (str "Bound tracker: " (:name bound)
                    ". `kanban card` joins the run's status and ready steps for cards stamped kanban/run-id.")
               (str "No tracker bound. Cards stamped kanban/run-id project honestly as unbound (name nil) "
@@ -1247,7 +1239,7 @@
               {:verb "rework" :purpose "Move an in_review card back to claimed."}
               {:verb "finish" :purpose "Close a card with an explicit outcome (feature from claimed/in_review; epic from refinement/pending — done requires closed children, abandoned cascades reversibly)."}
               {:verb "reopen" :purpose "Reopen an abandoned epic, reversing exactly the cascade the matching abandon closed."}
-              {:repl "ct.spools.kanban/print-board!" :purpose "ASCII board from mill weaver repl; CLI output stays JSON-only."}]
+              {:repl "ct.spools.kanban/print-board! runtime" :purpose "ASCII board from mill weaver repl; CLI output stays JSON-only."}]
    :patterns [{:name "kanban-batch"
                :input {:items [{:key "slug"
                                 :title "Feature title"
@@ -1264,8 +1256,8 @@
   attribute, command, and pattern surface and adds the working agreement,
   pick-up flow, note discipline, adjacent-work awareness, and branch
   visibility that an agent needs before touching the board."
-  []
-  (assoc (about)
+  [runtime]
+  (assoc (about runtime)
          :working-agreement
          (fmt/fill "
                |Every user request is a feature card; occasionally group related cards under an
@@ -1427,25 +1419,25 @@
 
 (defn kanban-op
   "Dispatch parsed `strand kanban ...` subcommands."
-  [{:op/keys [args]}]
+  [{:op/keys [args runtime]}]
   (let [flags (legacy-flags args)]
     (case (:subcommand args)
-      ["about"] (about)
-      ["prime"] (prime)
-      ["add"] (add! (str/join " " (:title args)) flags)
-      ["board"] (board)
-      ["card"] (card-view (:id args))
-      ["next"] {:operation "kanban next" :next (next-card)}
-      ["priority"] (set-priority! (:id args) (:priority args))
-      ["promote"] (promote! (:id args))
-      ["claim"] (claim! (:id args) flags)
-      ["task" "add"] (task-op args flags)
-      ["task" "list"] (task-op args flags)
-      ["review"] (review! (:id args))
-      ["rework"] (rework! (:id args))
-      ["note"] (note! (:id args) (str/join " " (:text args)) flags)
-      ["finish"] (finish! (:id args) flags)
-      ["reopen"] (reopen! (:id args)))))
+      ["about"] (about runtime)
+      ["prime"] (prime runtime)
+      ["add"] (add! runtime (str/join " " (:title args)) flags)
+      ["board"] (board runtime)
+      ["card"] (card-view runtime (:id args))
+      ["next"] {:operation "kanban next" :next (next-card runtime)}
+      ["priority"] (set-priority! runtime (:id args) (:priority args))
+      ["promote"] (promote! runtime (:id args))
+      ["claim"] (claim! runtime (:id args) flags)
+      ["task" "add"] (task-op runtime args flags)
+      ["task" "list"] (task-op runtime args flags)
+      ["review"] (review! runtime (:id args))
+      ["rework"] (rework! runtime (:id args))
+      ["note"] (note! runtime (:id args) (str/join " " (:text args)) flags)
+      ["finish"] (finish! runtime (:id args) flags)
+      ["reopen"] (reopen! runtime (:id args)))))
 
 ;; ---------------------------------------------------------------------------
 ;; kanban-export: a card's full parent-of subtree for offline rendering
@@ -1484,13 +1476,12 @@
   `subgraph` op walks one relation at a time, so this op exists to bundle the
   hierarchy and its dependencies in a single call. Fails loudly when the id is
   unknown or names a strand that is not a kanban card."
-  [ctx]
-  (let [{:keys [card-id]} (:op/args ctx)
-        rt (current/runtime)
-        card (card-strand card-id)
-        {:keys [strands edges]} (graph/subgraph rt [(:id card)] {:type "parent-of"})
+  [{:op/keys [args runtime]}]
+  (let [{:keys [card-id]} args
+        card (card-strand runtime card-id)
+        {:keys [strands edges]} (graph/subgraph runtime [(:id card)] {:type "parent-of"})
         id-set (set (map :id strands))
-        depends (:edges (graph/subgraph rt (vec id-set) {:type "depends-on"}))]
+        depends (:edges (graph/subgraph runtime (vec id-set) {:type "depends-on"}))]
     {:operation "kanban-export"
      :root-id card-id
      :strands (mapv export-strand strands)
@@ -1590,5 +1581,5 @@
   `ct.spools.kanban.peering/install-peering!` via `requiring-resolve` so the base
   kanban spool never load-depends on the guild spool; peering (and its guild
   dependency) load only when a repo opts in."
-  []
-  ((requiring-resolve 'ct.spools.kanban.peering/install-peering!)))
+  [runtime]
+  ((requiring-resolve 'ct.spools.kanban.peering/install-peering!) runtime))
