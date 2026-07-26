@@ -106,6 +106,8 @@ attribute namespace. It never binds a tracker. Replacing the module atomically r
 ops, the batch pattern, and both board queries; removing it removes those
 declarations without clearing stored cards or the tracker binding.
 
+Runtime-dependent Clojure functions take the target runtime first. For example, use `(kanban/add! runtime title flags)`, `(kanban/board runtime)`, and `(kanban/set-tracker! runtime binding)`. The registered CLI operations select the invoking weaver and pass its runtime into the same functions.
+
 ### Binding a tracker (optional)
 
 To have `kanban card` project a run's status and ready steps, bind a tracker

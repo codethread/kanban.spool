@@ -25,7 +25,6 @@
   (:require [clojure.data.json :as json]
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
-            [skein.api.current.alpha :as current]
             [skein.api.format.alpha :as fmt]
             [skein.api.graph.alpha :as graph]
             [skein.api.peers.alpha :as peers]
@@ -176,7 +175,7 @@
   `extra-flags` carries the `--type epic` / `--epic <id>` wiring for bundles;
   `stamp` is the `kanban/from` provenance string (nil to skip)."
   [rt card extra-flags stamp]
-  (let [id (get-in (kanban/add! (:title card) (merge (card->flags card) extra-flags))
+  (let [id (get-in (kanban/add! rt (:title card) (merge (card->flags card) extra-flags))
                    [:card :id])]
     (when stamp
       (weaver/update! rt id {:attributes {:kanban/from stamp}}))
@@ -190,17 +189,16 @@
   `:features` bundle creates the epic and hangs each feature under it with a
   `parent-of` edge (same path as `kanban add --epic`), preserving input order.
   Returns JSON-safe ids only."
-  [{:guild/keys [input]}]
-  (let [rt (current/runtime)
-        stamp (from-stamp (:from input))]
+  [{:guild/keys [input] :op/keys [runtime]}]
+  (let [stamp (from-stamp (:from input))]
     (if-let [card (:card input)]
       {:operation "kanban.send.v1"
-       :card {:id (create-card! rt card {} stamp)}}
-      (let [epic-id (create-card! rt (:epic input) {"--type" "epic"} stamp)]
+       :card {:id (create-card! runtime card {} stamp)}}
+      (let [epic-id (create-card! runtime (:epic input) {"--type" "epic"} stamp)]
         {:operation "kanban.send.v1"
          :epic {:id epic-id}
          :features (mapv (fn [feature]
-                           {:id (create-card! rt feature {"--epic" epic-id} stamp)})
+                           {:id (create-card! runtime feature {"--epic" epic-id} stamp)})
                          (:features input))}))))
 
 ;; ---------------------------------------------------------------------------
@@ -307,10 +305,9 @@
   active. The local weaver is marked `:self? true` when it appears in the roster
   and answers from the local op registry rather than calling its own socket. The
   return conforms to `::peers-result` (rows to `::peer-row`)."
-  [_ctx]
-  (let [rt (current/runtime)
-        self-id (:nonce (:metadata rt))
-        self-send? (op-registered? rt "kanban.send.v1")]
+  [{:op/keys [runtime]}]
+  (let [self-id (:nonce (:metadata runtime))
+        self-send? (op-registered? runtime "kanban.send.v1")]
     (conform-out!
      ::peers-result
      {:operation "kanban-peers"
@@ -610,16 +607,15 @@
   recording the created remote ids as a note on the local card. Returns the
   remote ids, conforming to `::send-result`. The local card's lane is never
   touched — closing it stays the caller's choice."
-  [{:op/keys [args runtime-metadata]}]
+  [{:op/keys [args runtime runtime-metadata]}]
   (let [{:keys [peer card-id]} args
-        rt (current/runtime)
         board (local-board-name runtime-metadata)
-        card (card-strand rt card-id)
-        payload (build-payload rt {:board board :card card-id} card)]
+        card (card-strand runtime card-id)
+        payload (build-payload runtime {:board board :card card-id} card)]
     (preflight-target! peer)
     (let [result (*send-card* peer (json/write-str payload))
           sent (created-ids payload (validate-send-result! peer payload result))]
-      (kanban/note! card-id (sent-note-text peer sent) {"--by" board "--kind" "summary"})
+      (kanban/note! runtime card-id (sent-note-text peer sent) {"--by" board "--kind" "summary"})
       (conform-out! ::send-result
                     {:operation "kanban-send"
                      :peer peer
@@ -742,27 +738,26 @@
   and the local `kanban-peers` and `kanban-send` ops. Every registration
   upserts (`guild/register-op!` and `register-or-replace-op!`), so re-running
   is reload-safe."
-  []
-  (let [rt (current/runtime)
-        guild-register-op! (requiring-resolve 'skein.spools.guild/register-op!)]
-    (require-peering-prerequisites! rt)
+  [runtime]
+  (let [guild-register-op! (requiring-resolve 'skein.spools.guild/register-op!)]
+    (require-peering-prerequisites! runtime)
     {:installed true
      :namespace 'ct.spools.kanban.peering
-     :op (guild-register-op! rt 'kanban.send.v1
+     :op (guild-register-op! runtime 'kanban.send.v1
                              {:doc "Receive a peered kanban card or epic bundle onto this board."
                               :input-spec ::send-input
                               :returns send-returns
                               :hook-class :mutating :deadline-class :standard}
                              'ct.spools.kanban.peering/send-op)
-     :ops [(if (op-registered? rt "kanban-peers")
-             (weaver/resolve-op rt 'kanban-peers)
-             (weaver/register-op! rt 'kanban-peers
+     :ops [(if (op-registered? runtime "kanban-peers")
+             (weaver/resolve-op runtime 'kanban-peers)
+             (weaver/register-op! runtime 'kanban-peers
                                   {:doc (:doc kanban-peers-arg-spec) :arg-spec kanban-peers-arg-spec
                                    :returns kanban-peers-returns}
                                   'ct.spools.kanban.peering/peers-op))
-           (if (op-registered? rt "kanban-send")
-             (weaver/resolve-op rt 'kanban-send)
-             (weaver/register-op! rt 'kanban-send
+           (if (op-registered? runtime "kanban-send")
+             (weaver/resolve-op runtime 'kanban-send)
+             (weaver/register-op! runtime 'kanban-send
                                   {:doc (:doc kanban-send-arg-spec) :arg-spec kanban-send-arg-spec
                                    :returns kanban-send-returns}
                                   'ct.spools.kanban.peering/send-card-op))]}))

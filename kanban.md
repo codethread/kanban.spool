@@ -158,7 +158,7 @@ strand weave --pattern kanban-batch --input '{"items":[{"key":"design","title":"
 The CLI stays JSON-only (TEN-006); the human rendering lives on the REPL surface:
 
 ```sh
-printf "(do (require 'ct.spools.kanban) (ct.spools.kanban/print-board!))\n" | mill weaver repl --stdin
+printf "(do (require '[ct.spools.kanban :as kanban] '[skein.api.current.alpha :as current]) (kanban/print-board! (current/runtime)))\n" | mill weaver repl --stdin
 ```
 
 `print-board!` prints a stacked-lane ASCII board (epics, refinement, pending, claimed and in_review with owner/branch and doing-task, needs-review); `board-str` is the pure renderer over the `board` result for reuse.
@@ -291,7 +291,7 @@ unbound, config supplies the implementation, and unbound use degrades honestly.
 reload — module activation never binds a default):
 
 ```clojure
-(kanban/set-tracker!
+(kanban/set-tracker! runtime
   {:name "devflow"
    :project 'kanban-tracker/devflow-projection})
 ```
@@ -299,7 +299,7 @@ reload — module activation never binds a default):
 - `:name` — a non-blank string naming the convention; it surfaces in `kanban about` and in the
   card view's `tracker` so a cold agent knows which tracker the steps come from.
 - `:project` — a fully-qualified symbol (resolved with `requiring-resolve` at call time, so a
-  reload rebinds cleanly) or a function. Contract: `(project run-id)` returns
+  reload rebinds cleanly) or a function. Contract: `(project runtime run-id)` returns
   `{:status <string|nil> :ready [step ...]}`. Kanban selects each step down to the closed key
   set `#{:id :title :role :stage :checkpoint}`, so the card-view shape stays kanban-owned whatever
   the tracker returns.
@@ -339,14 +339,15 @@ writes it.
 module (roughly fifteen lines) that composes devflow's read fns into the projection shape:
 
 ```clojure
-(defn devflow-projection [run-id]
-  (let [stage (some-> (devflow/feature-roots run-id) first
+(defn devflow-projection [runtime run-id]
+  (let [stage (some-> (devflow/feature-roots runtime run-id) first
                       (attr-value :devflow/stage))]
     {:status stage
-     :ready (if stage (devflow/ready run-id) [])}))
+     :ready (if stage (devflow/ready runtime run-id) [])}))
 
-(defn install! []
-  (kanban/set-tracker! {:name "devflow"
+(defn install! [runtime]
+  (kanban/set-tracker! runtime
+                       {:name "devflow"
                         :project 'kanban-tracker/devflow-projection}))
 ```
 

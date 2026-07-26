@@ -13,7 +13,6 @@
             [skein.api.runtime.alpha :as runtime]
             [skein.api.spool.alpha :as spool]
             [skein.api.weaver.alpha :as weaver]
-            [skein.core.weaver.runtime :as weaver-runtime]
             [ct.spools.kanban :as kanban]
             [ct.spools.kanban.peering :as peering]
             [skein.test.alpha :as t]))
@@ -30,9 +29,8 @@
   (t/run-with-weaver-world
    {:storage :sqlite-memory}
    (fn [ctx]
-     (weaver-runtime/with-runtime-binding (:runtime ctx)
-       #(do (setup (:runtime ctx))
-            (f (:runtime ctx)))))))
+     (setup (:runtime ctx))
+     (f (:runtime ctx)))))
 
 (defn- activate-guild!
   "Activate the guild spool module on `rt` from the loaded JVM image.
@@ -68,7 +66,7 @@
   "Run (f rt) with guild, kanban, and kanban peering active in order."
   [f]
   (with-world
-    (fn [rt] (activate-guild! rt) (activate-kanban! rt) (kanban/install-peering!))
+    (fn [rt] (activate-guild! rt) (activate-kanban! rt) (kanban/install-peering! rt))
     f))
 
 (defn- send!
@@ -80,10 +78,10 @@
   ;; precondition (a): guild must already be registered
   (with-world
     activate-kanban!
-    (fn [_rt]
+    (fn [rt]
       (let [ex (is (thrown-with-msg? clojure.lang.ExceptionInfo
                                      #"requires the guild module"
-                                     (kanban/install-peering!)))
+                                     (kanban/install-peering! rt)))
             remedy (:remedy (ex-data ex))]
         (is (= "guild" (:missing (ex-data ex))))
         (is (str/includes? remedy "skein.spools.guild"))
@@ -99,10 +97,10 @@
   ;; precondition (b): the kanban board module must already be active
   (with-world
     activate-guild!
-    (fn [_rt]
+    (fn [rt]
       (let [ex (is (thrown-with-msg? clojure.lang.ExceptionInfo
                                      #"requires the kanban module"
-                                     (kanban/install-peering!)))
+                                     (kanban/install-peering! rt)))
             remedy (:remedy (ex-data ex))]
         (is (= "kanban" (:missing (ex-data ex))))
         (is (str/includes? remedy "ct.spools.kanban"))
@@ -112,7 +110,7 @@
   (with-world
     (fn [rt] (activate-guild! rt) (activate-kanban! rt))
     (fn [rt]
-      (let [result (kanban/install-peering!)]
+      (let [result (kanban/install-peering! rt)]
         (is (true? (:installed result)))
         (is (= 'ct.spools.kanban.peering (:namespace result)))
         (is (some #(= "kanban.send.v1" (:name %)) (weaver/ops rt)))
@@ -125,7 +123,7 @@
     (fn [rt]
      ;; with-peering installed peering once already; guild/register-op! is upsert, so a
      ;; second install-peering! must not duplicate the op or break dispatch
-      (let [again (kanban/install-peering!)]
+      (let [again (kanban/install-peering! rt)]
         (is (true? (:installed again)))
         (is (= 'ct.spools.kanban.peering (:namespace again)))
         (is (= 1 (count (filter #(= "kanban.send.v1" (:name %)) (weaver/ops rt))))
@@ -252,8 +250,8 @@
 
 (defn- add-card!
   "Create a local kanban card through the board op and return its id."
-  ([title] (add-card! title {}))
-  ([title flags] (get-in (kanban/add! title flags) [:card :id])))
+  ([runtime title] (add-card! runtime title {}))
+  ([runtime title flags] (get-in (kanban/add! runtime title flags) [:card :id])))
 
 (defn- guild-list-with
   "A `guild list` result advertising the given active op names."
@@ -263,10 +261,10 @@
 (deftest send-builds-a-feature-payload-mapping-the-board-tier
   (with-peering
     (fn [rt]
-      (let [id (add-card! "Feature title" {"--body" "longer context"
-                                           "--source" "docs/rfc.md"
-                                           "--priority" "p1"
-                                           "--lane" "refinement"})
+      (let [id (add-card! rt "Feature title" {"--body" "longer context"
+                                              "--source" "docs/rfc.md"
+                                              "--priority" "p1"
+                                              "--lane" "refinement"})
             payload (#'peering/build-payload rt {:board "backend" :card id} (card-strand rt id))]
         (is (= {:card {:title "Feature title"
                        :lane "refinement"
@@ -281,7 +279,7 @@
     (fn [rt]
       ;; a bare pending card still carries add!'s defaults (pending, p3) but no
       ;; body/source, so only the present keys travel
-      (let [id (add-card! "Bare card")
+      (let [id (add-card! rt "Bare card")
             payload (#'peering/build-payload rt {:board "b" :card id} (card-strand rt id))]
         (is (= {:card {:title "Bare card" :lane "pending" :priority "p3"}
                 :from {:board "b" :card id}}
@@ -290,9 +288,9 @@
 (deftest send-builds-an-epic-bundle
   (with-peering
     (fn [rt]
-      (let [epic (add-card! "Theme epic" {"--type" "epic"})]
-        (add-card! "First" {"--epic" epic})
-        (add-card! "Second" {"--epic" epic "--priority" "p2"})
+      (let [epic (add-card! rt "Theme epic" {"--type" "epic"})]
+        (add-card! rt "First" {"--epic" epic})
+        (add-card! rt "Second" {"--epic" epic "--priority" "p2"})
         (let [payload (#'peering/build-payload rt {:board "backend" :card epic} (card-strand rt epic))]
           (is (= "Theme epic" (get-in payload [:epic :title])))
           (is (= {:board "backend" :card epic} (:from payload)))
@@ -308,22 +306,22 @@
   (with-peering
     (fn [rt]
       (testing "a claimed card fails loudly with its lane"
-        (let [id (add-card! "Claimed work")]
-          (kanban/claim! id {"--owner" "a" "--branch" "b"})
+        (let [id (add-card! rt "Claimed work")]
+          (kanban/claim! rt id {"--owner" "a" "--branch" "b"})
           (let [ex (is (thrown-with-msg? clojure.lang.ExceptionInfo #"in-flight"
                                          (#'peering/build-payload rt {:board "b" :card id} (card-strand rt id))))]
             (is (= "claimed" (:lane (ex-data ex)))))))
       (testing "an in_review card fails loudly with its lane"
-        (let [id (add-card! "Review work")]
-          (kanban/claim! id {"--owner" "a" "--branch" "b"})
-          (kanban/review! id)
+        (let [id (add-card! rt "Review work")]
+          (kanban/claim! rt id {"--owner" "a" "--branch" "b"})
+          (kanban/review! rt id)
           (let [ex (is (thrown-with-msg? clojure.lang.ExceptionInfo #"in-flight"
                                          (#'peering/build-payload rt {:board "b" :card id} (card-strand rt id))))]
             (is (= "in_review" (:lane (ex-data ex)))))))
       (testing "a closed card fails loudly as finished"
-        (let [id (add-card! "Finished work")]
-          (kanban/claim! id {"--owner" "a" "--branch" "b"})
-          (kanban/finish! id {"--outcome" "done"})
+        (let [id (add-card! rt "Finished work")]
+          (kanban/claim! rt id {"--owner" "a" "--branch" "b"})
+          (kanban/finish! rt id {"--outcome" "done"})
           (let [ex (is (thrown-with-msg? clojure.lang.ExceptionInfo #"closed"
                                          (#'peering/build-payload rt {:board "b" :card id} (card-strand rt id))))]
             (is (= "closed" (:state (ex-data ex))))))))))
@@ -331,10 +329,10 @@
 (deftest send-refuses-an-epic-with-unexpected-card-children
   (with-peering
     (fn [rt]
-      (let [epic (add-card! "Theme epic" {"--type" "epic"})
-            feature (add-card! "Real slice" {"--epic" epic})
-            nested (add-card! "Nested theme" {"--type" "epic"})
-            drifted (add-card! "Drifted slice" {"--epic" epic})]
+      (let [epic (add-card! rt "Theme epic" {"--type" "epic"})
+            feature (add-card! rt "Real slice" {"--epic" epic})
+            nested (add-card! rt "Nested theme" {"--type" "epic"})
+            drifted (add-card! rt "Drifted slice" {"--epic" epic})]
         (weaver/update! rt epic {:edges [{:type "parent-of" :to nested}]})
         (weaver/update! rt drifted {:attributes {:kanban/type "story"}})
         (testing "a nested epic and a drifted type are named, never dropped from the bundle"
@@ -353,11 +351,11 @@
     (fn [rt]
       ;; tasks, notes, and engine execution strands hang under cards unmarked:
       ;; they are not board cards, so they are not bundle members either
-      (let [epic (add-card! "Theme epic" {"--type" "epic"})
+      (let [epic (add-card! rt "Theme epic" {"--type" "epic"})
             work (weaver/add! rt {:title "Coordination strand" :attributes {:kind "task"}})]
-        (add-card! "Real slice" {"--epic" epic})
+        (add-card! rt "Real slice" {"--epic" epic})
         (weaver/update! rt epic {:edges [{:type "parent-of" :to (:id work)}]})
-        (kanban/note! epic "Handover" {"--by" "agent"})
+        (kanban/note! rt epic "Handover" {"--by" "agent"})
         (let [payload (#'peering/build-payload rt {:board "b" :card epic} (card-strand rt epic))]
           (is (= [{:title "Real slice" :lane "pending" :priority "p3"}]
                  (:features payload))))))))
@@ -365,10 +363,10 @@
 (deftest send-refuses-an-epic-with-in-flight-children
   (with-peering
     (fn [rt]
-      (let [epic (add-card! "Blocked epic" {"--type" "epic"})
-            open (add-card! "Open feature" {"--epic" epic})
-            claimed (add-card! "Claimed feature" {"--epic" epic})]
-        (kanban/claim! claimed {"--owner" "a" "--branch" "b"})
+      (let [epic (add-card! rt "Blocked epic" {"--type" "epic"})
+            open (add-card! rt "Open feature" {"--epic" epic})
+            claimed (add-card! rt "Claimed feature" {"--epic" epic})]
+        (kanban/claim! rt claimed {"--owner" "a" "--branch" "b"})
         (let [ex (is (thrown-with-msg? clojure.lang.ExceptionInfo #"in-flight feature children"
                                        (#'peering/build-payload rt {:board "b" :card epic} (card-strand rt epic))))]
           (is (= [{:id claimed :title "Claimed feature" :lane "claimed"}]
@@ -381,10 +379,10 @@
   (with-peering
     (fn [rt]
       ;; an epic whose only child is finished has nothing left to peer
-      (let [epic (add-card! "Spent epic" {"--type" "epic"})
-            done (add-card! "Done feature" {"--epic" epic})]
-        (kanban/claim! done {"--owner" "a" "--branch" "b"})
-        (kanban/finish! done {"--outcome" "done"})
+      (let [epic (add-card! rt "Spent epic" {"--type" "epic"})
+            done (add-card! rt "Done feature" {"--epic" epic})]
+        (kanban/claim! rt done {"--owner" "a" "--branch" "b"})
+        (kanban/finish! rt done {"--outcome" "done"})
         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"no pending or refinement feature"
                               (#'peering/build-payload rt {:board "b" :card epic} (card-strand rt epic))))))))
 
@@ -402,7 +400,7 @@
 (deftest send-preflights-the-target-for-the-receive-op
   (with-peering
     (fn [rt]
-      (let [id (add-card! "To send")]
+      (let [id (add-card! rt "To send")]
         (testing "a peer whose guild lacks kanban.send.v1 fails loudly"
           (binding [peering/*list-peer-guild* (fn [_] (guild-list-with "gate.status.v1"))]
             (is (thrown-with-msg? clojure.lang.ExceptionInfo #"does not advertise kanban.send.v1"
@@ -421,7 +419,7 @@
 (deftest send-invokes-the-peer-and-notes-the-local-card
   (with-peering
     (fn [rt]
-      (let [id (add-card! "Ship it" {"--body" "context"})
+      (let [id (add-card! rt "Ship it" {"--body" "context"})
             sent-args (atom nil)]
         (binding [peering/*list-peer-guild* (fn [_] (guild-list-with "kanban.send.v1"))
                   peering/*send-card* (fn [peer json-arg]
@@ -449,9 +447,9 @@
 (deftest send-invokes-the-peer-with-an-epic-bundle
   (with-peering
     (fn [rt]
-      (let [epic (add-card! "Bundle epic" {"--type" "epic"})]
-        (add-card! "F1" {"--epic" epic})
-        (add-card! "F2" {"--epic" epic})
+      (let [epic (add-card! rt "Bundle epic" {"--type" "epic"})]
+        (add-card! rt "F1" {"--epic" epic})
+        (add-card! rt "F2" {"--epic" epic})
         (binding [peering/*list-peer-guild* (fn [_] (guild-list-with "kanban.send.v1"))
                   peering/*send-card* (fn [_ _]
                                         {"operation" "kanban.send.v1"
@@ -480,7 +478,7 @@
                       "advertiser" (guild-list-with "kanban.send.v1" "gate.status.v1")
                       "plain" (throw (ex-info "unknown op" {:code :peer/domain-error}))
                       (throw (ex-info "unexpected probe" {:row row}))))]
-          (let [result (peering/peers-op {})
+          (let [result (peering/peers-op {:op/runtime rt})
                 by-name (into {} (map (juxt :name identity)) (:peers result))]
             (is (= "kanban-peers" (:operation result)))
             (testing "an advertising running peer is a send target"
@@ -496,7 +494,7 @@
 
 (deftest peers-propagates-a-non-domain-probe-failure
   (with-peering
-    (fn [_rt]
+    (fn [rt]
       (binding [peering/*list-peers* (fn [] [{:name "broken" :workspace "/ws/b"
                                               :weaver-id "w-b" :running? true}])
                 peering/*list-peer-guild*
@@ -504,13 +502,13 @@
         ;; TEN-003: only an unknown-op domain error classifies as non-peering; a
         ;; transport failure must never be swallowed into :kanban-send? false
         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"socket down"
-                              (peering/peers-op {})))))))
+                              (peering/peers-op {:op/runtime rt})))))))
 
 (deftest install-peering-registers-both-send-side-ops
   (with-world
     (fn [rt] (activate-guild! rt) (activate-kanban! rt))
     (fn [rt]
-      (kanban/install-peering!)
+      (kanban/install-peering! rt)
       (let [ops (into {} (map (juxt :name identity)) (weaver/ops rt))]
         (testing "kanban-peers is a read op with its arg-spec and returns"
           (let [entry (get ops "kanban-peers")]
@@ -530,7 +528,7 @@
     (fn [rt]
       ;; with-peering installed once; a second install-peering! (config reload)
       ;; must upsert rather than collide on the already-registered names
-      (is (map? (kanban/install-peering!)))
+      (is (map? (kanban/install-peering! rt)))
       (doseq [op-name ["kanban-peers" "kanban-send"]]
         (is (= 1 (count (filter #(= op-name (:name %)) (weaver/ops rt))))
             (str "re-running install-peering! keeps a single " op-name))))))
@@ -543,23 +541,23 @@
   ;; TEN-003: a malformed guild list reply is protocol corruption, never a
   ;; peer that is silently classified as non-advertising
   (with-peering
-    (fn [_rt]
+    (fn [rt]
       (let [row [{:name "broken" :workspace "/ws/b" :weaver-id "w-b" :running? true}]]
         (testing "a reply with no active list is rejected"
           (binding [peering/*list-peers* (fn [] row)
                     peering/*list-peer-guild* (fn [_] {"guild" "peer"})]
             (is (thrown-with-msg? clojure.lang.ExceptionInfo #"malformed envelope"
-                                  (peering/peers-op {})))))
+                                  (peering/peers-op {:op/runtime rt})))))
         (testing "an active entry without a string name is rejected"
           (binding [peering/*list-peers* (fn [] row)
                     peering/*list-peer-guild* (fn [_] {"active" [{"nope" 1}]})]
             (is (thrown-with-msg? clojure.lang.ExceptionInfo #"malformed envelope"
-                                  (peering/peers-op {})))))))))
+                                  (peering/peers-op {:op/runtime rt})))))))))
 
 (deftest send-preflight-fails-loud-on-a-malformed-guild-list-envelope
   (with-peering
     (fn [rt]
-      (let [id (add-card! "To send")]
+      (let [id (add-card! rt "To send")]
         (binding [peering/*list-peer-guild* (fn [_] {"active" [{"nope" 1}]})]
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"malformed envelope"
                                 (weaver/op! rt 'kanban-send ["frontend" id]))))))))
@@ -567,7 +565,7 @@
 (deftest send-fails-loud-on-a-malformed-peer-result
   (with-peering
     (fn [rt]
-      (let [id (add-card! "Ship it")
+      (let [id (add-card! rt "Ship it")
             listing (fn [_] (guild-list-with "kanban.send.v1"))]
         (testing "a missing card id is not silently reported as success"
           (binding [peering/*list-peer-guild* listing
@@ -586,9 +584,9 @@
 (deftest send-fails-loud-on-an-epic-feature-count-mismatch
   (with-peering
     (fn [rt]
-      (let [epic (add-card! "Bundle epic" {"--type" "epic"})]
-        (add-card! "F1" {"--epic" epic})
-        (add-card! "F2" {"--epic" epic})
+      (let [epic (add-card! rt "Bundle epic" {"--type" "epic"})]
+        (add-card! rt "F1" {"--epic" epic})
+        (add-card! rt "F2" {"--epic" epic})
         (binding [peering/*list-peer-guild* (fn [_] (guild-list-with "kanban.send.v1"))
                   peering/*send-card* (fn [_ _] {"epic" {"id" "remote-epic"}
                                                  "features" [{"id" "only-one"}]})]
@@ -602,9 +600,9 @@
   ;; bundle alongside a sendable sibling
   (with-peering
     (fn [rt]
-      (let [epic (add-card! "Corrupt epic" {"--type" "epic"})
-            good (add-card! "Good feature" {"--epic" epic})
-            bad (add-card! "Corrupt feature" {"--epic" epic})]
+      (let [epic (add-card! rt "Corrupt epic" {"--type" "epic"})
+            good (add-card! rt "Good feature" {"--epic" epic})
+            bad (add-card! rt "Corrupt feature" {"--epic" epic})]
         (weaver/update! rt bad {:attributes {:kanban/lane "bogus"}})
         (let [ex (is (thrown-with-msg? clojure.lang.ExceptionInfo #"unknown or missing board lane"
                                        (#'peering/build-payload rt {:board "b" :card epic} (card-strand rt epic))))]
