@@ -27,7 +27,7 @@ Every card also carries a `kanban/priority` that orders lanes and `kanban next` 
 - **p3** — the default: most things.
 - **p4** — maybe one day; the never-ending someday list.
 
-Card state lives under the `kanban/*` attribute topic:
+Card state lives under the `kanban/*` attribute topic, and labels under the sibling `kanban.label/*` topic:
 
 | Attribute | Meaning |
 | --- | --- |
@@ -41,9 +41,20 @@ Card state lives under the `kanban/*` attribute topic:
 | `kanban/task` | `"true"` on task strands: `parent-of` children of a feature card whose status is derived, never stored. |
 | `kanban/run-id` | Optional tracker run-id; `kanban card` joins the bound tracker's status and ready steps (see [Tracker seam](#tracker-seam)). |
 | `kanban/from` | Peering provenance serialized as `<board>:<card>` from the wire `:from` map. |
+| `kanban.label/<slug>` | String `"true"`, one key per label the card carries. Free-form: no vocabulary is registered up front. |
 | `owner` | Who is driving the work; required at claim. |
 | `branch` | The work branch; required at claim. |
 | `worktree` | Optional worktree path. |
+
+**Labels.** Lanes are a card's position and epics are its grouping; labels are the free-form
+axis that cuts across both. A label is a slug matching `[a-z0-9][a-z0-9-]*` — inputs are trimmed
+and lowercased, so `Perf` and `perf` are one label, and anything outside the grammar fails loudly
+rather than being coerced. Each label is its own attribute key rather than an entry in one list
+value, so adding or removing a label is a single-key delta: two agents labelling the same card
+concurrently cannot overwrite each other. There is no label registry to populate first — a label
+exists the moment a card carries it, and `kanban label list` reports the labels in use across
+active cards so an agent reuses an existing one instead of coining a near-duplicate. `board` and
+`next` take repeated `--label` flags that intersect (a card must carry every one).
 
 The card is the **work root**: execution strands hang under it with `parent-of` edges, and the claim-time `branch`/`owner`/`worktree` stamp makes the whole subtree discoverable by branch (see the repo's `strand branches` convention). Kanban never tracks execution runs directly, but because they hang under card descendants, `strand subgraph <card-id>` (and future queries) can project every strand working under a feature.
 
@@ -117,11 +128,14 @@ Module activation registers one declared-subcommand operation. `strand help kanb
 ```sh
 strand kanban prime
 strand kanban about
-strand kanban add "Feature idea" [--body "Longer context"] [--source docs/rfcs/...] [--lane pending|refinement] [--type feature|epic] [--epic <epic-id>] [--priority p1|p2|p3|p4]
-strand kanban board
+strand kanban add "Feature idea" [--body "Longer context"] [--source docs/rfcs/...] [--lane pending|refinement] [--type feature|epic] [--epic <epic-id>] [--priority p1|p2|p3|p4] [--label <slug> ...]
+strand kanban board [--label <slug> ...]
 strand kanban card <id>
-strand kanban next
+strand kanban next [--label <slug> ...]
 strand kanban priority <id> <p1|p2|p3|p4>
+strand kanban label add <id> <slug> [<slug> ...]
+strand kanban label rm <id> <slug> [<slug> ...]
+strand kanban label list
 strand kanban promote <id>
 strand kanban claim <id> --owner <name> --branch <branch> [--worktree /path] [--run-id <run-id>]
 strand kanban note <card-or-task-id> <text> [--by <name>] [--kind activity|decision|review-dump|summary]
@@ -135,7 +149,14 @@ strand kanban reopen <epic-id>
 
 `prime` is the agent onboarding surface: a superset of `about` that adds the working discipline (work under a claimed card, the pick-up-next flow, the note-as-you-go/resume-from-task contract, adjacent-work awareness, and branch visibility) so repo agent docs point at it instead of duplicating conventions that then drift from the spool. `about` stays the terse command manual.
 
-`board` returns the grouped snapshot (epics, refinement/pending/claimed/in_review lanes sorted p1-first then oldest, closed count); active cards with a lane outside the known set surface in `unknown-lane` rather than being hidden. It also returns `needs-review`: a vector aggregated across claimed and in-review feature cards of `{:card :item}` entries (plus `:branch` from the claim stamp), one per card descendant that is active, in the engine ready frontier, and marks human review (`hitl` true, `workflow/checkpoint-kind` `human`, or `kind` `review`), sorted by card id then item id — the always-present cross-card review queue. `next` returns the highest-priority (p1 first) oldest active pending feature (epics are never served). `priority` restamps an active card's `kanban/priority` and fails loudly on unknown values or closed cards. `promote` is the explicit human command that moves a refinement card into the pending lane. `claim` fails loudly without `--owner` and `--branch` and refuses epics; `--worktree` is optional for direct work in the main checkout. `review` moves a claimed card to `in_review`; `rework` moves it back to `claimed`; `finish` is polymorphic on `kanban/type` — it closes a claimed or in-review *feature* with an explicit `kanban/outcome`, and closes an *epic* from `refinement`/`pending` (`--outcome done` guards its feature children are closed, `--outcome abandoned` cascades a reversible close, recording `kanban/abandon-restore-lane`). `reopen` is the inverse of an epic abandon only — it restores an abandoned epic and the children that abandon closed to their stored lanes and refuses a done or non-abandoned card (see [Finishing an epic](#finishing-an-epic)).
+`board` returns the grouped snapshot (epics, refinement/pending/claimed/in_review lanes sorted p1-first then oldest, closed count); active cards with a lane outside the known set surface in `unknown-lane` rather than being hidden. It also returns `needs-review`: a vector aggregated across claimed and in-review feature cards of `{:card :item}` entries (plus `:branch` from the claim stamp), one per card descendant that is active, in the engine ready frontier, and marks human review (`hitl` true, `workflow/checkpoint-kind` `human`, or `kind` `review`), sorted by card id then item id — the always-present cross-card review queue. `next` returns the highest-priority (p1 first) oldest active pending feature (epics are never served). Repeated `--label` flags on `board` and `next` narrow to cards carrying *every* listed label; on `board` the filter scopes the whole snapshot — lanes, epics, review frontier, and the closed count alike — so a filtered board still reads as a board, and a feature whose epic was filtered out keeps its lane entry and loses only its `epic` annotation. `priority` restamps an active card's `kanban/priority` and fails loudly on unknown values or closed cards. `promote` is the explicit human command that moves a refinement card into the pending lane. `claim` fails loudly without `--owner` and `--branch` and refuses epics; `--worktree` is optional for direct work in the main checkout. `review` moves a claimed card to `in_review`; `rework` moves it back to `claimed`; `finish` is polymorphic on `kanban/type` — it closes a claimed or in-review *feature* with an explicit `kanban/outcome`, and closes an *epic* from `refinement`/`pending` (`--outcome done` guards its feature children are closed, `--outcome abandoned` cascades a reversible close, recording `kanban/abandon-restore-lane`). `reopen` is the inverse of an epic abandon only — it restores an abandoned epic and the children that abandon closed to their stored lanes and refuses a done or non-abandoned card (see [Finishing an epic](#finishing-an-epic)).
+
+`label add` and `label rm` stamp and clear labels on one card and return the card's full label set;
+both are idempotent, so adding a label a card already carries and removing one it never had are
+no-ops rather than failures. `label list` returns the labels in use on active cards with the count
+of cards carrying each — the board's cards *are* the vocabulary, so this is how an agent discovers
+which labels exist. Compact cards on `board` and `next` carry a sorted `labels` vector, omitted
+entirely when a card has none.
 
 `card` returns the resume view (card, tasks with derived statuses and `latest-note`, compact card
 notes, active work, ready frontier) plus `related`: a vector of `{:relation :strand}` entries for
@@ -188,6 +209,7 @@ Peering moves the **board tier only** — the shape of the work, not its executi
 | A feature card's title, body, priority, source, and lane (`pending`/`refinement`). | Tasks and any other `parent-of` execution strands. |
 | An epic card and its pending/refinement feature children as one bundle. | Notes, and everything under them. |
 | `:from` provenance: the sending board's name and the local card id. | Claims (`owner`/`branch`/`worktree`) and the local card id as an identity. |
+| | Labels: the wire contract is a closed allowlist, and label vocabularies are board-local, so a received card starts unlabelled. |
 
 Only queued work travels. A `claimed`, `in_review`, or closed card is in-flight or finished work that is world-local; `kanban-send` refuses it loudly with the blocking lane. An epic refuses to send while any feature child is `claimed` or `in_review` (the blocking children are named); closed children are finished and simply stay home. A bundle carries every direct child that claims card-ness (`kanban/card`), so a nested epic or a drifted marker or type is named in a loud failure rather than dropped from a bundle that then reports success; unmarked children — tasks, notes, and the execution strands an engine hangs under a card — are not cards and never join the bundle. Received cards are **new local cards** on the target board — they travel the same `add!` path as any local card, take the target's own ids and defaults, and carry no back-reference beyond the `kanban/from` stamp. Nothing on either board's lane changes as a side effect: closing the source card after a send stays the caller's choice.
 
