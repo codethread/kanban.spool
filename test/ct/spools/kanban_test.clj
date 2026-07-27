@@ -209,7 +209,7 @@
         (let [detail (weaver/op! rt 'help ["kanban"])
               children (get-in detail [:node :children])
               verbs (mapv :name children)]
-          (is (= ["about" "add" "board" "card" "claim" "finish" "next" "note" "prime" "priority" "promote" "reopen" "review" "rework" "task"] verbs))
+          (is (= ["about" "add" "board" "card" "claim" "finish" "label" "next" "note" "prime" "priority" "promote" "reopen" "review" "rework" "task"] verbs))
           (is (some #(= "about" (:name %)) children))))
       (testing "depth-N help resolves task add to its classified leaf"
         (let [detail (weaver/op! rt 'help ["kanban" "task" "add"])
@@ -232,7 +232,7 @@
                                             (op! rt "bogus")))]
           (is (= :missing-subcommand (:reason (ex-data missing))))
           (is (= :unknown-subcommand (:reason (ex-data unknown))))
-          (is (= ["about" "add" "board" "card" "claim" "finish" "next" "note" "prime" "priority" "promote" "reopen" "review" "rework" "task"]
+          (is (= ["about" "add" "board" "card" "claim" "finish" "label" "next" "note" "prime" "priority" "promote" "reopen" "review" "rework" "task"]
                  (:available (ex-data missing))))
           (is (= (:available (ex-data missing))
                  (:available (ex-data unknown)))))))))
@@ -341,6 +341,62 @@
                                 (op! rt "priority" blocker "p1"))))
         (testing "about documents the priority ladder"
           (is (= #{:p1 :p2 :p3 :p4} (set (keys (:priorities (op! rt "about")))))))))))
+
+(deftest kanban-labels-cut-across-lanes-and-epics
+  (with-kanban
+    (fn [rt]
+      (let [perf (get-in (op! rt "add" "Speed up export" "--label" "perf" "--label" "Infra")
+                         [:card :id])
+            plain (get-in (op! rt "add" "Unlabelled work") [:card :id])]
+        (testing "add stamps one attribute key per label, normalized and sorted on read"
+          (let [attrs (:attributes (weaver/show rt perf))]
+            (is (= "true" (:kanban.label/perf attrs)))
+            (is (= "true" (:kanban.label/infra attrs))
+                "labels are lowercased so Infra and infra are one label"))
+          (is (= ["infra" "perf"]
+                 (:labels (some #(when (= perf (:id %)) %) (:pending (op! rt "board")))))))
+        (testing "compact cards omit :labels entirely when a card carries none"
+          (is (not (contains? (some #(when (= plain (:id %)) %) (:pending (op! rt "board")))
+                              :labels))))
+        (testing "labels outside the slug grammar fail loudly rather than being coerced"
+          (doseq [bad ["needs review" "-leading" "Perf!" ""]]
+            (is (thrown-with-msg? clojure.lang.ExceptionInfo #"label"
+                                  (op! rt "label" "add" perf bad)))))
+        (testing "label add is additive and idempotent"
+          (is (= ["infra" "perf"] (:labels (op! rt "label" "add" perf "perf"))))
+          (is (= ["flaky" "infra" "perf"] (:labels (op! rt "label" "add" perf "flaky")))))
+        (testing "label rm deletes only that label's key and tolerates absent labels"
+          (is (= ["infra" "perf"] (:labels (op! rt "label" "rm" perf "flaky"))))
+          (is (= ["infra" "perf"] (:labels (op! rt "label" "rm" perf "never-applied"))))
+          (let [attrs (:attributes (weaver/show rt perf))]
+            (is (not (contains? attrs :kanban.label/flaky)))
+            (is (= "true" (:kanban.label/perf attrs)))))
+        (testing "board --label intersects the requested labels and scopes the closed count"
+          (op! rt "label" "add" plain "infra")
+          (is (= [perf] (mapv :id (:pending (op! rt "board" "--label" "perf" "--label" "infra")))))
+          (is (= #{perf plain} (set (mapv :id (:pending (op! rt "board" "--label" "infra"))))))
+          (op! rt "claim" plain "--owner" "agent" "--branch" "labels-x")
+          (op! rt "finish" plain)
+          (is (= 1 (get-in (op! rt "board" "--label" "infra") [:closed :count])))
+          (is (zero? (get-in (op! rt "board" "--label" "perf") [:closed :count]))))
+        (testing "next narrows the pending queue to the requested labels"
+          (let [other (get-in (op! rt "add" "Higher priority elsewhere" "--priority" "p1")
+                              [:card :id])]
+            (is (= other (get-in (op! rt "next") [:next :id])))
+            (is (= perf (get-in (op! rt "next" "--label" "perf") [:next :id])))
+            (is (nil? (:next (op! rt "next" "--label" "absent"))))))
+        (testing "label list is the vocabulary: labels in use on active cards with card counts"
+          (is (= [{:label "infra" :cards 1} {:label "perf" :cards 1}]
+                 (:labels (op! rt "label" "list"))))))))
+  (testing "cards that predate labels read as unlabelled"
+    (with-kanban
+      (fn [rt]
+        (let [legacy (weaver/add! rt {:title "Legacy card"
+                                      :attributes {:kanban/card "true"
+                                                   :kanban/lane "pending"
+                                                   :kanban/type "feature"}})]
+          (is (= [] (:labels (op! rt "label" "list"))))
+          (is (= [(:id legacy)] (mapv :id (:pending (op! rt "board"))))))))))
 
 (deftest kanban-epics-group-features
   (with-kanban
@@ -714,7 +770,7 @@
     (fn [rt]
       (let [long-title (apply str "Very long title " (repeat 40 "padding "))
             _idea (op! rt "add" long-title "--lane" "refinement")
-            working-id (get-in (op! rt "add" "Working card") [:card :id])]
+            working-id (get-in (op! rt "add" "Working card" "--label" "perf") [:card :id])]
         (op! rt "claim" working-id "--owner" "agent-a" "--branch" "feature-x")
         (let [rendered ((requiring-resolve 'ct.spools.kanban/board-str) (op! rt "board"))
               lines (str/split-lines rendered)]
@@ -722,7 +778,7 @@
           (is (str/includes? rendered "PENDING (0)"))
           (is (str/includes? rendered "CLAIMED / WIP (1)"))
           (is (str/includes? rendered "IN REVIEW (0)"))
-          (is (str/includes? rendered "[p3 @feature-x agent-a] Working card"))
+          (is (str/includes? rendered "[p3 #perf @feature-x agent-a] Working card"))
           (is (str/includes? rendered "NEEDS REVIEW (0)"))
           (testing "rows are clipped to the board width"
             (is (every? #(<= (count %) 100) lines))))))))

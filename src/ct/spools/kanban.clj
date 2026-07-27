@@ -45,6 +45,14 @@
 (def ^:private card-priorities #{"p1" "p2" "p3" "p4"})
 (def ^:private default-priority "p3")
 
+;; One attribute key per label (`kanban.label/<slug>` = "true") rather than one
+;; key holding a list: adding or removing a label is then a single-key delta, so
+;; concurrent labellers never overwrite each other the way a read-merged list
+;; value would (see `update-card!`). The namespace is open — labels are a
+;; free-form cross-cutting axis, not a closed enum like lane or priority.
+(def ^:private label-ns "kanban.label")
+(def ^:private label-pattern #"[a-z0-9][a-z0-9-]*")
+
 (defn- non-blank-string?
   "Return true when v is a non-blank string."
   [v]
@@ -100,6 +108,51 @@
                     {:priority priority :allowed (sort card-priorities)})))
   priority)
 
+(defn- label-slug
+  "Return the label slug of an attribute key under the `kanban.label` namespace, or nil.
+
+  Attribute maps arrive keyword-keyed natively and string-keyed after a JSON
+  round-trip through the weaver, so both keyings are matched (the same tolerance
+  `attr-get` provides for a single known key)."
+  [k]
+  (cond
+    (keyword? k) (when (= label-ns (namespace k)) (name k))
+    (string? k) (let [prefix (str label-ns "/")]
+                  (when (str/starts-with? k prefix) (subs k (count prefix))))))
+
+(defn- card-labels
+  "Return a card's labels as a sorted vector of slugs.
+
+  Only keys stamped `\"true\"` count, so a label cleared to any other value reads
+  as absent rather than silently staying on the card."
+  [strand]
+  (->> (:attributes strand)
+       (keep (fn [[k v]] (when (= "true" v) (label-slug k))))
+       sort
+       vec))
+
+(defn- require-label!
+  "Return the normalized slug for a user-supplied label, failing loudly otherwise.
+
+  Labels are trimmed and lowercased on the way in so `Perf` and `perf` are one
+  label rather than two that render identically."
+  [label]
+  (let [slug (str/lower-case (str/trim (require-non-blank! :label label)))]
+    (when-not (re-matches label-pattern slug)
+      (throw (ex-info "kanban label must match [a-z0-9][a-z0-9-]* after trimming and lowercasing"
+                      {:label label :normalized slug})))
+    slug))
+
+(defn- label-attr-key
+  "Return the attribute key carrying one label."
+  [slug]
+  (keyword label-ns slug))
+
+(defn- label-attrs
+  "Return the attribute delta stamping `value` on each of `labels`."
+  [labels value]
+  (into {} (map (fn [label] [(label-attr-key (require-label! label)) value])) labels))
+
 (defn- card-attributes
   "Return the attributes for a newly added kanban card strand."
   [flags]
@@ -117,7 +170,8 @@
              type-attr type
              priority-attr priority}
       (get flags "--body") (assoc :body (get flags "--body"))
-      (get flags "--source") (assoc :kanban/source (get flags "--source")))))
+      (get flags "--source") (assoc :kanban/source (get flags "--source"))
+      (seq (get flags "--label")) (merge (label-attrs (get flags "--label") "true")))))
 
 (defn- compact-card
   "Return the compact card shape used in board/next output."
@@ -132,7 +186,8 @@
     (attr-value strand :owner) (assoc :owner (attr-value strand :owner))
     (attr-value strand :branch) (assoc :branch (attr-value strand :branch))
     (attr-value strand :worktree) (assoc :worktree (attr-value strand :worktree))
-    (attr-value strand :kanban/source) (assoc :source (attr-value strand :kanban/source))))
+    (attr-value strand :kanban/source) (assoc :source (attr-value strand :kanban/source))
+    (seq (card-labels strand)) (assoc :labels (card-labels strand))))
 
 (defn- card-strand
   "Return id's kanban card strand, failing loudly if it is absent or not a card."
@@ -292,6 +347,35 @@
     (let [updated (update-card! runtime strand {priority-attr priority} nil)]
       {:operation "kanban priority"
        :card (entity-projection updated)})))
+
+(defn- write-labels!
+  "Stamp or clear `labels` on a card and return the op result with its labels."
+  [runtime op id labels value]
+  (let [strand (card-strand runtime (require-non-blank! :id id))
+        attrs (label-attrs labels value)]
+    (when (empty? attrs)
+      (throw (ex-info (str op " requires at least one label") {:id (:id strand)})))
+    (let [updated (update-card! runtime strand attrs nil)]
+      {:operation op
+       :card (entity-projection updated)
+       :labels (card-labels updated)})))
+
+(defn label-add!
+  "Add labels to a card, one `kanban.label/<slug>` attribute key per label.
+
+  Adding a label a card already carries is idempotent, and labels are free-form:
+  no vocabulary is registered up front, so a new label exists the moment it is
+  first used."
+  [runtime id labels]
+  (write-labels! runtime "kanban label add" id labels "true"))
+
+(defn label-rm!
+  "Remove labels from a card by deleting their attribute keys.
+
+  Removing a label a card does not carry is a no-op, so an unlabel is safe to
+  repeat without first reading the card."
+  [runtime id labels]
+  (write-labels! runtime "kanban label rm" id labels nil))
 
 (defn- claim-run-id
   "Return the run id to stamp at claim, or nil when `--run-id` is absent."
@@ -988,6 +1072,35 @@
   [runtime]
   (weaver/list runtime [:= [:attr "kanban/card"] "true"] {}))
 
+(defn- label-filter
+  "Return a predicate selecting cards that carry every requested label.
+
+  Repeated `--label` flags intersect rather than union: `--label perf --label
+  infra` is the cards sitting on both axes, which is the narrowing a board
+  filter is asked for."
+  [labels]
+  (if (seq labels)
+    (let [wanted (mapv require-label! labels)]
+      (fn [card]
+        (let [carried (set (card-labels card))]
+          (every? carried wanted))))
+    (constantly true)))
+
+(defn label-list
+  "Return every label in use on active cards with the count of cards carrying it.
+
+  Labels have no registry of their own, so the board's own cards are the
+  vocabulary: this is how an agent discovers which labels exist before reusing
+  one instead of coining a near-duplicate."
+  [runtime]
+  (let [counts (->> (cards runtime)
+                    (filter #(= "active" (:state %)))
+                    (mapcat card-labels)
+                    frequencies)]
+    {:operation "kanban label list"
+     :labels (mapv (fn [[label n]] {:label label :cards n})
+                   (sort-by key counts))}))
+
 (defn- by-created
   "Return strands sorted oldest first."
   [strands]
@@ -999,15 +1112,22 @@
   (sort-by (juxt card-priority :created_at :id) strands))
 
 (defn next-card
-  "Return the highest-priority (p1 first) oldest active pending feature card, or nil."
-  [runtime]
-  (some->> (cards runtime)
-           (filter #(and (= "active" (:state %))
-                         (= "pending" (attr-value % lane-attr))
-                         (= "feature" (card-type %))))
-           by-priority
-           first
-           compact-card))
+  "Return the highest-priority (p1 first) oldest active pending feature card, or nil.
+
+  `labels` narrows the queue to cards carrying every listed label, so an agent
+  working one axis pulls the next card on that axis rather than the next card
+  overall."
+  ([runtime] (next-card runtime nil))
+  ([runtime labels]
+   (let [labelled? (label-filter labels)]
+     (some->> (cards runtime)
+              (filter #(and (= "active" (:state %))
+                            (= "pending" (attr-value % lane-attr))
+                            (= "feature" (card-type %))
+                            (labelled? %)))
+              by-priority
+              first
+              compact-card))))
 
 (defn- epic-membership
   "Return {feature-card-id epic-id} for direct features under active epics."
@@ -1058,46 +1178,53 @@
   Claimed and in-review cards carry their doing-task so a cold agent can see in
   one call who is working where and how to pick up interrupted work.
   `:needs-review` aggregates the human-review frontier across claimed and
-  in-review cards."
-  [runtime]
-  (let [all (cards runtime)
-        active (filter #(= "active" (:state %)) all)
-        epics (filterv #(= "epic" (card-type %)) active)
-        features (remove #(= "epic" (card-type %)) active)
-        claimed-features (filter #(= "claimed" (attr-value % lane-attr)) features)
-        review-features (filter #(= "in_review" (attr-value % lane-attr)) features)
-        membership (epic-membership runtime epics)
-        with-epic (fn [card]
-                    (cond-> (compact-card card)
-                      (membership (:id card)) (assoc :epic (membership (:id card)))))
-        lane (fn [lane-name]
-               (->> features
-                    (filter #(= lane-name (attr-value % lane-attr)))
-                    by-priority
-                    (mapv with-epic)))
-        known-lanes active-lanes
-        unknown (->> features
-                     (remove #(contains? known-lanes (attr-value % lane-attr)))
-                     by-created
-                     (mapv with-epic))]
-    (cond-> {:operation "kanban board"
-             :epics (mapv compact-card (by-created epics))
-             :refinement (lane "refinement")
-             :pending (lane "pending")
-             :claimed (mapv (fn [card]
-                              (cond-> (with-epic card)
-                                (doing-task-for runtime card)
-                                (assoc :doing-task (doing-task-for runtime card))))
-                            (by-priority claimed-features))
-             :in_review (mapv (fn [card]
-                                (cond-> (with-epic card)
-                                  (doing-task-for runtime card)
-                                  (assoc :doing-task (doing-task-for runtime card))))
-                              (by-priority review-features))
-             :needs-review (needs-review-entries runtime (concat claimed-features review-features))
-             :closed {:count (count (filter #(= "closed" (:state %)) all))}}
+  in-review cards.
+
+  `labels` scopes the whole snapshot — lanes, epics, review frontier, and the
+  closed count alike — to cards carrying every listed label, so a filtered board
+  reads as a board rather than a lane list with a mismatched tally. A feature
+  whose epic is filtered out keeps its lane entry and loses only the `:epic`
+  annotation."
+  ([runtime] (board runtime nil))
+  ([runtime labels]
+   (let [all (filterv (label-filter labels) (cards runtime))
+         active (filter #(= "active" (:state %)) all)
+         epics (filterv #(= "epic" (card-type %)) active)
+         features (remove #(= "epic" (card-type %)) active)
+         claimed-features (filter #(= "claimed" (attr-value % lane-attr)) features)
+         review-features (filter #(= "in_review" (attr-value % lane-attr)) features)
+         membership (epic-membership runtime epics)
+         with-epic (fn [card]
+                     (cond-> (compact-card card)
+                       (membership (:id card)) (assoc :epic (membership (:id card)))))
+         lane (fn [lane-name]
+                (->> features
+                     (filter #(= lane-name (attr-value % lane-attr)))
+                     by-priority
+                     (mapv with-epic)))
+         known-lanes active-lanes
+         unknown (->> features
+                      (remove #(contains? known-lanes (attr-value % lane-attr)))
+                      by-created
+                      (mapv with-epic))]
+     (cond-> {:operation "kanban board"
+              :epics (mapv compact-card (by-created epics))
+              :refinement (lane "refinement")
+              :pending (lane "pending")
+              :claimed (mapv (fn [card]
+                               (cond-> (with-epic card)
+                                 (doing-task-for runtime card)
+                                 (assoc :doing-task (doing-task-for runtime card))))
+                             (by-priority claimed-features))
+              :in_review (mapv (fn [card]
+                                 (cond-> (with-epic card)
+                                   (doing-task-for runtime card)
+                                   (assoc :doing-task (doing-task-for runtime card))))
+                               (by-priority review-features))
+              :needs-review (needs-review-entries runtime (concat claimed-features review-features))
+              :closed {:count (count (filter #(= "closed" (:state %)) all))}}
       ;; active cards outside the known lanes are drift; surface them loudly
-      (seq unknown) (assoc :unknown-lane unknown))))
+       (seq unknown) (assoc :unknown-lane unknown)))))
 
 ;; ---------------------------------------------------------------------------
 ;; ASCII board: REPL human view (the CLI stays JSON-only per TEN-006)
@@ -1113,9 +1240,10 @@
 
 (defn- card-line
   "Return one ASCII board row for a compact card map."
-  [{:keys [id title owner branch epic priority]}]
+  [{:keys [id title owner branch epic priority labels]}]
   (let [tags (cond-> []
                priority (conj priority)
+               (seq labels) (into (map #(str "#" %)) labels)
                branch (conj (str "@" branch))
                owner (conj owner)
                epic (conj (str "epic:" epic)))
@@ -1199,6 +1327,7 @@
                 task-attr "true on task strands (parent-of children of a feature card; status derived)"
                 run-id-attr "optional tracker run-id; `kanban card` joins the bound tracker's status and ready steps"
                 :kanban/source "optional path or URL for design context"
+                :kanban.label/* "one key per label, value \"true\"; free-form cross-cutting axis, no registered vocabulary"
                 :owner "claimant, required at claim"
                 :branch "work branch, required at claim"
                 :worktree "optional worktree path"}
@@ -1231,6 +1360,7 @@
               {:verb "card" :purpose "Show one card with notes, active work, related cards, and ready frontier."}
               {:verb "next" :purpose "Return the next pending feature card by priority and age."}
               {:verb "priority" :purpose "Change a card's p1..p4 ordering priority."}
+              {:verb "label" :purpose "Add, remove, or list the free-form labels that cut across lanes and epics."}
               {:verb "promote" :purpose "Move a refinement card into the pending lane."}
               {:verb "claim" :purpose "Move a card into claimed and stamp owner/branch/worktree."}
               {:verb "note" :purpose "Append an immutable note to a card or task (the doing-task is the resume read)."}
@@ -1344,19 +1474,37 @@
                    :lane {:doc "Initial lane: pending or refinement."}
                    :type {:doc "Card type: feature or epic."}
                    :epic {:doc "Existing epic card id to parent this feature under."}
-                   :priority {:doc "Priority p1|p2|p3|p4; defaults to p3."}}
+                   :priority {:doc "Priority p1|p2|p3|p4; defaults to p3."}
+                   :label {:repeat? true
+                           :doc "Label to stamp on the card (repeatable)."}}
            :positionals [{:name :title
                           :required? true
                           :variadic? true
                           :doc "Card title words."}]
            :hook-class :mutating :deadline-class :standard}
     "board" {:doc "Return the grouped board snapshot."
+             :flags {:label {:repeat? true
+                             :doc "Only cards carrying this label; repeat to require all of them."}}
              :hook-class :read :deadline-class :standard}
     "card" {:doc "Return one card's resume view."
             :positionals [{:name :id :required? true :doc "Kanban card id."}]
             :hook-class :read :deadline-class :standard}
     "next" {:doc "Return the highest-priority (p1 first) oldest active pending feature card."
+            :flags {:label {:repeat? true
+                            :doc "Only cards carrying this label; repeat to require all of them."}}
             :hook-class :read :deadline-class :standard}
+    "label" {:doc "Manage a card's free-form labels."
+             :subcommands
+             {"add" {:doc "Add labels to a card."
+                     :positionals [{:name :id :required? true :doc "Kanban card id."}
+                                   {:name :labels :required? true :variadic? true :doc "Label slugs to add."}]
+                     :hook-class :mutating :deadline-class :standard}
+              "rm" {:doc "Remove labels from a card."
+                    :positionals [{:name :id :required? true :doc "Kanban card id."}
+                                  {:name :labels :required? true :variadic? true :doc "Label slugs to remove."}]
+                    :hook-class :mutating :deadline-class :standard}
+              "list" {:doc "List every label in use on active cards with its card count."
+                      :hook-class :read :deadline-class :standard}}}
     "priority" {:doc "Set an active card's priority (p1 immediate blocker .. p4 someday)."
                 :positionals [{:name :id :required? true :doc "Kanban card id."}
                               {:name :priority :required? true :doc "Priority: p1, p2, p3, or p4."}]
@@ -1413,7 +1561,7 @@
         (keep (fn [[k v]]
                 (when (and (not= k :subcommand)
                            (some? v)
-                           (not (contains? #{:id :title :text :feature} k)))
+                           (not (contains? #{:id :title :text :feature :labels} k)))
                   [(str "--" (name k)) v])))
         args))
 
@@ -1425,10 +1573,13 @@
       ["about"] (about runtime)
       ["prime"] (prime runtime)
       ["add"] (add! runtime (str/join " " (:title args)) flags)
-      ["board"] (board runtime)
+      ["board"] (board runtime (get flags "--label"))
       ["card"] (card-view runtime (:id args))
-      ["next"] {:operation "kanban next" :next (next-card runtime)}
+      ["next"] {:operation "kanban next" :next (next-card runtime (get flags "--label"))}
       ["priority"] (set-priority! runtime (:id args) (:priority args))
+      ["label" "add"] (label-add! runtime (:id args) (:labels args))
+      ["label" "rm"] (label-rm! runtime (:id args) (:labels args))
+      ["label" "list"] (label-list runtime)
       ["promote"] (promote! runtime (:id args))
       ["claim"] (claim! runtime (:id args) flags)
       ["task" "add"] (task-op runtime args flags)
@@ -1524,6 +1675,14 @@
           "kanban/run-id" "kanban/from" "kanban/abandon-restore-lane"]
    :doc "Kanban card state attributes written by ct.spools.kanban/add!."})
 
+(def ^:private kanban-label-vocab
+  ;; No advisory :keys list: the label namespace is deliberately open, so the
+  ;; keys in use are whatever the board's cards carry (`kanban label list`).
+  {:kind :attr-namespace
+   :name label-ns
+   :owner :skein/spools-kanban
+   :doc "Open per-label marker keys: `kanban.label/<slug>` is \"true\" on every card carrying <slug>."})
+
 (def ^:private kanban-op-options
   {:doc "Manage the user-facing kanban work board. Run `strand kanban about` for the convention manual."
    :arg-spec kanban-arg-spec :returns kanban-returns})
@@ -1559,6 +1718,7 @@
   (if (= :removed (get-in ctx [:module/contribution :status]))
     {:reconciled :removed}
     (do (vocab/declare! runtime kanban-vocab)
+        (vocab/declare! runtime kanban-label-vocab)
         (runtime/spool-state runtime ::state {:version state-version} new-state)
         {:reconciled :applied})))
 

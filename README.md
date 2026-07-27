@@ -3,7 +3,7 @@
 `ct.spools.kanban` provides the user-facing kanban work board for
 [Skein](https://github.com/codethread/skein) as a git-distributed spool:
 feature/epic cards, refinement/pending/claimed/in_review lanes, a derived-status
-task tier, notes, and the `strand kanban` CLI op.
+task tier, notes, free-form labels, and the `strand kanban` CLI op.
 
 It is trusted Clojure code for a live Skein weaver. The spool has no
 `spool.edn` manifest; consumption is the manifest-free contract: approve source
