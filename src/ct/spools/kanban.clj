@@ -187,6 +187,7 @@
     (attr-value strand :branch) (assoc :branch (attr-value strand :branch))
     (attr-value strand :worktree) (assoc :worktree (attr-value strand :worktree))
     (attr-value strand :kanban/source) (assoc :source (attr-value strand :kanban/source))
+    (attr-value strand :kanban/outcome) (assoc :outcome (attr-value strand :kanban/outcome))
     (seq (card-labels strand)) (assoc :labels (card-labels strand))))
 
 (defn- card-strand
@@ -1130,15 +1131,11 @@
               compact-card))))
 
 (defn- epic-membership
-  "Return {feature-card-id epic-id} for direct features under active epics."
+  "Return {feature-card-id epic-id} for direct features under epics."
   [rt epics]
   (into {}
-        (mapcat (fn [epic]
-                  (let [{:keys [edges]} (graph/subgraph rt [(:id epic)] {:type "parent-of"})]
-                    (->> edges
-                         (filter #(= (:id epic) (:from_strand_id %)))
-                         (map (fn [edge] [(:to_strand_id edge) (:id epic)]))))))
-        epics))
+        (map (juxt :to_strand_id :from_strand_id))
+        (graph/outgoing-edges rt (mapv :id epics) "parent-of")))
 
 (defn- doing-task-for
   "Return the compact derived-`doing` task for a card, or nil.
@@ -1184,19 +1181,29 @@
   closed count alike — to cards carrying every listed label, so a filtered board
   reads as a board rather than a lane list with a mismatched tally. A feature
   whose epic is filtered out keeps its lane entry and loses only the `:epic`
-  annotation."
-  ([runtime] (board runtime nil))
-  ([runtime labels]
+  annotation.
+
+  `all?` adds `:cards`, a compact all-state card collection with direct epic
+  membership. The ordinary grouped active snapshot remains unchanged."
+  ([runtime] (board runtime nil false))
+  ([runtime labels] (board runtime labels false))
+  ([runtime labels all?]
    (let [all (filterv (label-filter labels) (cards runtime))
          active (filter #(= "active" (:state %)) all)
          epics (filterv #(= "epic" (card-type %)) active)
+         all-epics (filterv #(= "epic" (card-type %)) all)
          features (remove #(= "epic" (card-type %)) active)
          claimed-features (filter #(= "claimed" (attr-value % lane-attr)) features)
          review-features (filter #(= "in_review" (attr-value % lane-attr)) features)
          membership (epic-membership runtime epics)
+         all-membership (when all? (epic-membership runtime all-epics))
          with-epic (fn [card]
                      (cond-> (compact-card card)
                        (membership (:id card)) (assoc :epic (membership (:id card)))))
+         all-with-epic (fn [card]
+                         (cond-> (compact-card card)
+                           (all-membership (:id card))
+                           (assoc :epic (all-membership (:id card)))))
          lane (fn [lane-name]
                 (->> features
                      (filter #(= lane-name (attr-value % lane-attr)))
@@ -1224,7 +1231,8 @@
               :needs-review (needs-review-entries runtime (concat claimed-features review-features))
               :closed {:count (count (filter #(= "closed" (:state %)) all))}}
       ;; active cards outside the known lanes are drift; surface them loudly
-       (seq unknown) (assoc :unknown-lane unknown)))))
+       (seq unknown) (assoc :unknown-lane unknown)
+       all? (assoc :cards (mapv all-with-epic (by-created all)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; ASCII board: REPL human view (the CLI stays JSON-only per TEN-006)
@@ -1484,7 +1492,9 @@
            :hook-class :mutating :deadline-class :standard}
     "board" {:doc "Return the grouped board snapshot."
              :flags {:label {:repeat? true
-                             :doc "Only cards carrying this label; repeat to require all of them."}}
+                             :doc "Only cards carrying this label; repeat to require all of them."}
+                     :all {:type :boolean-token
+                           :doc "Include compact all-state cards with direct epic membership."}}
              :hook-class :read :deadline-class :standard}
     "card" {:doc "Return one card's resume view."
             :positionals [{:name :id :required? true :doc "Kanban card id."}]
@@ -1573,7 +1583,9 @@
       ["about"] (about runtime)
       ["prime"] (prime runtime)
       ["add"] (add! runtime (str/join " " (:title args)) flags)
-      ["board"] (board runtime (get flags "--label"))
+      ["board"] (board runtime
+                       (get flags "--label")
+                       (boolean (get flags "--all")))
       ["card"] (card-view runtime (:id args))
       ["next"] {:operation "kanban next" :next (next-card runtime (get flags "--label"))}
       ["priority"] (set-priority! runtime (:id args) (:priority args))
