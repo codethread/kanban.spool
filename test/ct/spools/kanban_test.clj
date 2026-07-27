@@ -719,6 +719,22 @@
           (is (not (contains? board :unknown-lane))))
         (is (= "abandoned" (get-in (weaver/show rt done-id) [:attributes :kanban/outcome])))))))
 
+(deftest kanban-board-all-adds-all-state-cards-with-epic-membership
+  (with-kanban
+    (fn [rt]
+      (let [epic-id (get-in (op! rt "add" "Epic" "--type" "epic") [:card :id])
+            feature-id (get-in (op! rt "add" "Feature" "--epic" epic-id) [:card :id])]
+        (op! rt "claim" feature-id "--owner" "agent" "--branch" "feature")
+        (op! rt "finish" feature-id "--outcome" "done")
+        (testing "the ordinary snapshot stays lean"
+          (is (not (contains? (op! rt "board") :cards))))
+        (testing "all mode carries closed cards, outcomes, and direct epic membership"
+          (let [cards (into {} (map (juxt :id identity)) (:cards (op! rt "board" "--all" "true")))]
+            (is (= #{epic-id feature-id} (set (keys cards))))
+            (is (= "closed" (get-in cards [feature-id :state])))
+            (is (= "done" (get-in cards [feature-id :outcome])))
+            (is (= epic-id (get-in cards [feature-id :epic])))))))))
+
 (deftest kanban-board-needs-review-frontier
   (with-kanban
     (fn [rt]
