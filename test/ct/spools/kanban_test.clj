@@ -135,11 +135,15 @@
 (deftest kanban-owner-contribution-covers-every-board-declaration
   ;; A module publication replaces this owner partition as a whole.  Keep this
   ;; observable boundary list exact so a future declaration cannot accidentally
-  ;; bypass deletion-on-refresh by being installed imperatively.
+  ;; bypass deletion-on-refresh by being installed imperatively.  Growing a
+  ;; list is accretion, but the previous marker's frozen copy of this test
+  ;; pins the old set, so compat-alarm reports exactly one expected failure
+  ;; here at each accreting release — record it in the release tag message.
   (let [contribution (kanban/contribute {})]
     (is (= #{"kanban" "kanban-export"} (set (keys (:ops contribution)))))
     (is (= #{"kanban-batch"} (set (keys (:patterns contribution)))))
-    (is (= #{"kanban-cards" "kanban-pending"} (set (keys (:queries contribution)))))))
+    (is (= #{"kanban-cards" "kanban-pending" "kanban-epic-pending"}
+           (set (keys (:queries contribution)))))))
 
 (deftest kanban-about-commands-match-declared-subcommands
   (with-kanban
@@ -419,6 +423,63 @@
                                 (op! rt "add" "Nested" "--type" "epic" "--epic" epic-id)))
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not an epic"
                                 (op! rt "add" "Bad parent" "--epic" feat-id))))))))
+
+(deftest kanban-epic-pending-query-scopes-the-ready-frontier
+  (with-kanban
+    (fn [rt]
+      (let [epic (get-in (op! rt "add" "Loop epic" "--type" "epic") [:card :id])
+            other-epic (get-in (op! rt "add" "Other theme" "--type" "epic") [:card :id])
+            first-slice (get-in (op! rt "add" "First slice" "--epic" epic) [:card :id])
+            second-slice (get-in (op! rt "add" "Second slice" "--epic" epic) [:card :id])
+            claimed (get-in (op! rt "add" "Started slice" "--epic" epic) [:card :id])
+            elsewhere (get-in (op! rt "add" "Other slice" "--epic" other-epic) [:card :id])
+            loose (get-in (op! rt "add" "Loose work") [:card :id])
+            definition (graph/resolve-query rt "kanban-epic-pending")]
+        (op! rt "claim" claimed "--owner" "agent" "--branch" "epic-q")
+        (testing "the query selects one epic's active pending cards only"
+          (is (= #{first-slice second-slice}
+                 (set (graph/query-ids rt "kanban-epic-pending" {:epic epic})))
+              "claimed cards, other epics' cards, and loose cards stay out")
+          (is (= #{elsewhere}
+                 (set (graph/query-ids rt "kanban-epic-pending" {:epic other-epic}))))
+          (is (empty? (graph/query-ids rt "kanban-epic-pending" {:epic loose}))
+              "a non-epic id matches nothing: no cards hang under it"))
+        (testing "the ready overlay turns the selection into the epic's frontier"
+          (weaver/update! rt second-slice
+                          {:edges [{:type "depends-on" :to first-slice}]})
+          (is (= [first-slice]
+                 (mapv :id (weaver/ready rt definition {:epic epic})))
+              "a card blocked inside the epic drops out of the ready view"))
+        (testing "the declared parameter is the one the where-clause references"
+          (is (= [:epic] (:params definition)))
+          (is (= [:epic] (graph/referenced-params definition))))
+        (testing "a missing parameter fails loudly instead of matching nothing"
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Missing query parameter"
+                                (graph/query-ids rt "kanban-epic-pending" {}))))))))
+
+(deftest kanban-next-epic-narrows-the-queue-to-one-epic
+  (with-kanban
+    (fn [rt]
+      (let [epic (get-in (op! rt "add" "Loop epic" "--type" "epic") [:card :id])
+            slow (get-in (op! rt "add" "Default slice" "--epic" epic) [:card :id])
+            urgent (get-in (op! rt "add" "Urgent slice" "--epic" epic "--priority" "p2")
+                           [:card :id])
+            blocker (get-in (op! rt "add" "Board-wide blocker" "--priority" "p1")
+                            [:card :id])]
+        (testing "next --epic serves the epic's own queue in priority order"
+          (is (= blocker (get-in (op! rt "next") [:next :id]))
+              "without --epic the board-wide p1 wins")
+          (is (= urgent (get-in (op! rt "next" "--epic" epic) [:next :id])))
+          (op! rt "claim" urgent "--owner" "agent" "--branch" "epic-next")
+          (is (= slow (get-in (op! rt "next" "--epic" epic) [:next :id]))))
+        (testing "an exhausted epic serves nil rather than leaking other work"
+          (op! rt "claim" slow "--owner" "agent" "--branch" "epic-next")
+          (is (nil? (:next (op! rt "next" "--epic" epic)))))
+        (testing "a non-epic or unknown id fails loudly"
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not an epic"
+                                (op! rt "next" "--epic" blocker)))
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not found"
+                                (op! rt "next" "--epic" "nope"))))))))
 
 (defn- no-blank-string-attrs?
   "Return true when a stored strand carries no attribute set to the empty string.

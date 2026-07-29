@@ -131,7 +131,7 @@ strand kanban about
 strand kanban add "Feature idea" [--body "Longer context"] [--source docs/rfcs/...] [--lane pending|refinement] [--type feature|epic] [--epic <epic-id>] [--priority p1|p2|p3|p4] [--label <slug> ...]
 strand kanban board [--label <slug> ...] [--all true]
 strand kanban card <id>
-strand kanban next [--label <slug> ...]
+strand kanban next [--label <slug> ...] [--epic <epic-id>]
 strand kanban priority <id> <p1|p2|p3|p4>
 strand kanban label add <id> <slug> [<slug> ...]
 strand kanban label rm <id> <slug> [<slug> ...]
@@ -149,7 +149,7 @@ strand kanban reopen <epic-id>
 
 `prime` is the agent onboarding surface: a superset of `about` that adds the working discipline (work under a claimed card, the pick-up-next flow, the note-as-you-go/resume-from-task contract, adjacent-work awareness, and branch visibility) so repo agent docs point at it instead of duplicating conventions that then drift from the spool. `about` stays the terse command manual.
 
-`board` returns the grouped snapshot (epics, refinement/pending/claimed/in_review lanes sorted p1-first then oldest, closed count); active cards with a lane outside the known set surface in `unknown-lane` rather than being hidden. `--all true` also returns `cards`, a compact all-state collection whose feature rows carry their direct `epic` id and whose closed rows carry their outcome. It also returns `needs-review`: a vector aggregated across claimed and in-review feature cards of `{:card :item}` entries (plus `:branch` from the claim stamp), one per card descendant that is active, in the engine ready frontier, and marks human review (`hitl` true, `workflow/checkpoint-kind` `human`, or `kind` `review`), sorted by card id then item id — the always-present cross-card review queue. `next` returns the highest-priority (p1 first) oldest active pending feature (epics are never served). Repeated `--label` flags on `board` and `next` narrow to cards carrying *every* listed label; on `board` the filter scopes the whole snapshot — lanes, epics, review frontier, closed count, and all-state cards alike — so a filtered board still reads as a board, and a feature whose epic was filtered out keeps its lane entry and loses only its `epic` annotation. `priority` restamps an active card's `kanban/priority` and fails loudly on unknown values or closed cards. `promote` is the explicit human command that moves a refinement card into the pending lane. `claim` fails loudly without `--owner` and `--branch` and refuses epics; `--worktree` is optional for direct work in the main checkout. `review` moves a claimed card to `in_review`; `rework` moves it back to `claimed`; `finish` is polymorphic on `kanban/type` — it closes a claimed or in-review *feature* with an explicit `kanban/outcome`, and closes an *epic* from `refinement`/`pending` (`--outcome done` guards its feature children are closed, `--outcome abandoned` cascades a reversible close, recording `kanban/abandon-restore-lane`). `reopen` is the inverse of an epic abandon only — it restores an abandoned epic and the children that abandon closed to their stored lanes and refuses a done or non-abandoned card (see [Finishing an epic](#finishing-an-epic)).
+`board` returns the grouped snapshot (epics, refinement/pending/claimed/in_review lanes sorted p1-first then oldest, closed count); active cards with a lane outside the known set surface in `unknown-lane` rather than being hidden. `--all true` also returns `cards`, a compact all-state collection whose feature rows carry their direct `epic` id and whose closed rows carry their outcome. It also returns `needs-review`: a vector aggregated across claimed and in-review feature cards of `{:card :item}` entries (plus `:branch` from the claim stamp), one per card descendant that is active, in the engine ready frontier, and marks human review (`hitl` true, `workflow/checkpoint-kind` `human`, or `kind` `review`), sorted by card id then item id — the always-present cross-card review queue. `next` returns the highest-priority (p1 first) oldest active pending feature (epics are never served); `--epic <epic-id>` narrows the queue to that epic's direct features — the pick-up read for a loop working one epic — and fails loudly when the id does not name an epic card. Repeated `--label` flags on `board` and `next` narrow to cards carrying *every* listed label; on `board` the filter scopes the whole snapshot — lanes, epics, review frontier, closed count, and all-state cards alike — so a filtered board still reads as a board, and a feature whose epic was filtered out keeps its lane entry and loses only its `epic` annotation. `priority` restamps an active card's `kanban/priority` and fails loudly on unknown values or closed cards. `promote` is the explicit human command that moves a refinement card into the pending lane. `claim` fails loudly without `--owner` and `--branch` and refuses epics; `--worktree` is optional for direct work in the main checkout. `review` moves a claimed card to `in_review`; `rework` moves it back to `claimed`; `finish` is polymorphic on `kanban/type` — it closes a claimed or in-review *feature* with an explicit `kanban/outcome`, and closes an *epic* from `refinement`/`pending` (`--outcome done` guards its feature children are closed, `--outcome abandoned` cascades a reversible close, recording `kanban/abandon-restore-lane`). `reopen` is the inverse of an epic abandon only — it restores an abandoned epic and the children that abandon closed to their stored lanes and refuses a done or non-abandoned card (see [Finishing an epic](#finishing-an-epic)).
 
 `label add` and `label rm` stamp and clear labels on one card and return the card's full label set;
 both are idempotent, so adding a label a card already carries and removing one it never had are
@@ -384,3 +384,18 @@ Module activation also registers:
 
 - `kanban-cards` — all kanban card strands.
 - `kanban-pending` — active cards with `kanban/lane=pending`.
+- `kanban-epic-pending` — active pending cards hanging directly under one epic;
+  parameterised, so the epic is named at invocation time.
+
+`kanban-epic-pending` is the epic-loop frontier read: composed with the engine's ready overlay it
+answers "what is ready next inside epic X" in one command, honouring the `depends-on` edges between
+the epic's cards:
+
+```sh
+strand ready --query kanban-epic-pending --param epic=<epic-id>
+```
+
+`strand list --query kanban-epic-pending --param epic=<epic-id>` is the same selection without
+readiness — every pending card in the epic, blocked or not. A missing `--param` fails loudly;
+a non-epic id matches nothing, since no cards hang under it. `kanban next --epic` serves the same
+queue one card at a time, ordered by priority.

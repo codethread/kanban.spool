@@ -32,7 +32,7 @@ User-facing kanban board over Skein strands.
 Function.
 
 Return the kanban convention and installed helper surface.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1316-L1386">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1334-L1404">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/add!">`add!`</a>
 ``` clojure
@@ -69,7 +69,7 @@ Return the grouped board snapshot: epics, feature lanes, closed count.
 
   `all?` adds `:cards`, a compact all-state card collection with direct epic
   membership. The ordinary grouped active snapshot remains unchanged.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1172-L1235">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1190-L1253">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/board-str">`board-str`</a>
 ``` clojure
@@ -78,7 +78,7 @@ Return the grouped board snapshot: epics, feature lanes, closed count.
 Function.
 
 Render a `board` result map as a stacked-lane ASCII board string.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1290-L1309">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1308-L1327">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/card-view">`card-view`</a>
 ``` clojure
@@ -122,7 +122,7 @@ Return kanban's complete owner contribution for module publication.
   refresh that omits one therefore removes it instead of retaining a stale
   command, query, or pattern.  Vocabulary is runtime state rather than a core
   owner registry, so reconcile owns its idempotent declaration.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1706-L1725">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1726-L1754">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/finish!">`finish!`</a>
 ``` clojure
@@ -154,7 +154,7 @@ Register the opt-in `kanban.send.v1` board-peering receive op.
   `ct.spools.kanban.peering/install-peering!` via `requiring-resolve` so the base
   kanban spool never load-depends on the guild spool; peering (and its guild
   dependency) load only when a repo opts in.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1748-L1757">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1777-L1786">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/kanban-batch">`kanban-batch`</a>
 ``` clojure
@@ -188,7 +188,7 @@ Handle `strand kanban-export <card-id>`: a card's full parent-of subtree
   `subgraph` op walks one relation at a time, so this op exists to bundle the
   hierarchy and its dependencies in a single call. Fails loudly when the id is
   unknown or names a strand that is not a kanban card.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1630-L1652">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1650-L1672">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/kanban-op">`kanban-op`</a>
 ``` clojure
@@ -197,7 +197,7 @@ Handle `strand kanban-export <card-id>`: a card's full parent-of subtree
 Function.
 
 Dispatch parsed `strand kanban ...` subcommands.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1578-L1603">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1597-L1623">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/label-add!">`label-add!`</a>
 ``` clojure
@@ -241,6 +241,7 @@ Remove labels from a card by deleting their attribute keys.
 ``` clojure
 (next-card runtime)
 (next-card runtime labels)
+(next-card runtime labels epic-id)
 ```
 Function.
 
@@ -248,8 +249,10 @@ Return the highest-priority (p1 first) oldest active pending feature card, or ni
 
   `labels` narrows the queue to cards carrying every listed label, so an agent
   working one axis pulls the next card on that axis rather than the next card
-  overall.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1115-L1131">Source</a></sub></p>
+  overall. `epic-id` narrows to one epic's direct features — the pick-up read
+  for a loop working a single epic — and fails loudly when the id does not
+  name an epic card.
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1128-L1149">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/note!">`note!`</a>
 ``` clojure
@@ -283,7 +286,7 @@ Return the full agent-priming payload for working the kanban board.
   attribute, command, and pattern surface and adds the working agreement,
   pick-up flow, note discipline, adjacent-work awareness, and branch
   visibility that an agent needs before touching the board.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1388-L1468">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1406-L1486">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/print-board!">`print-board!`</a>
 ``` clojure
@@ -292,7 +295,7 @@ Return the full agent-priming payload for working the kanban board.
 Function.
 
 Print the live board as ASCII; the human view for `mill weaver repl`.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1311-L1314">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1329-L1332">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/promote!">`promote!`</a>
 ``` clojure
@@ -310,7 +313,7 @@ Move a refinement card into the pending lane (an explicit human act).
 Function.
 
 Reconcile kanban's non-registry runtime state around module publication.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1727-L1735">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1756-L1764">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/reopen!">`reopen!`</a>
 ``` clojure
@@ -388,7 +391,7 @@ Entry-point declaration for the kanban spool (ADR-004 `def spool` convention).
   and world policy (`{:ns 'ct.spools.kanban :spools ['codethread/kanban]}`) and
   never mirrors the pair. Unqualified symbols resolve against this namespace;
   fn values are rejected (ADR-002.O1).
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1737-L1746">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1766-L1775">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/task-add!">`task-add!`</a>
 ``` clojure

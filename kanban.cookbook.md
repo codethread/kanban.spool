@@ -155,6 +155,11 @@ Honest source: the `kanban-batch` pattern in the spool source and its two test c
 epic=$(strand kanban add "Board rewrite" --type epic | jq -r '.card.id')
 strand kanban add "Design the lanes"  --epic "$epic"
 strand kanban add "Port the old cards" --epic "$epic" --priority p2
+
+# Work the epic as a loop: the ready frontier inside it, honouring depends-on edges…
+strand ready --query kanban-epic-pending --param epic="$epic"
+# …or one card at a time, priority-ordered.
+strand kanban next --epic "$epic"
 ```
 
 **Why this shape.**
@@ -171,6 +176,12 @@ strand kanban add "Port the old cards" --epic "$epic" --priority p2
 - **The nesting rules fail loudly.** An epic can't nest under another epic, and
   `--epic` must point at an actual epic — both are rejected at `add` time, so the
   grouping can't quietly go two levels deep or hang a feature off a non-epic.
+- **The epic has its own frontier.** `kanban next --epic` serves the epic's own
+  queue (and fails loudly on a non-epic id), and the registered
+  `kanban-epic-pending` query composed with `strand ready` answers "what is
+  ready next inside this epic" while cards blocked by `depends-on` edges stay
+  out of view — the one-command read a loop working a single epic resumes from
+  ([Queries](./kanban.md#queries); `kanban-epic-pending-query-scopes-the-ready-frontier`).
 
 Honest source: `add!`'s `--type`/`--epic` handling and `kanban-epics-group-features`.
 
