@@ -1112,20 +1112,38 @@
   [strands]
   (sort-by (juxt card-priority :created_at :id) strands))
 
+(defn- epic-member-filter
+  "Return a predicate selecting the direct feature children of one epic.
+
+  Fails loudly when `epic-id` does not name an epic card, so a typo surfaces
+  as an error instead of an empty queue. A nil `epic-id` selects everything."
+  [runtime epic-id]
+  (if epic-id
+    (let [epic (epic-strand runtime epic-id)
+          member-ids (into #{} (map :to_strand_id)
+                           (graph/outgoing-edges runtime [(:id epic)] "parent-of"))]
+      (comp member-ids :id))
+    (constantly true)))
+
 (defn next-card
   "Return the highest-priority (p1 first) oldest active pending feature card, or nil.
 
   `labels` narrows the queue to cards carrying every listed label, so an agent
   working one axis pulls the next card on that axis rather than the next card
-  overall."
+  overall. `epic-id` narrows to one epic's direct features — the pick-up read
+  for a loop working a single epic — and fails loudly when the id does not
+  name an epic card."
   ([runtime] (next-card runtime nil))
-  ([runtime labels]
-   (let [labelled? (label-filter labels)]
+  ([runtime labels] (next-card runtime labels nil))
+  ([runtime labels epic-id]
+   (let [labelled? (label-filter labels)
+         member? (epic-member-filter runtime epic-id)]
      (some->> (cards runtime)
               (filter #(and (= "active" (:state %))
                             (= "pending" (attr-value % lane-attr))
                             (= "feature" (card-type %))
-                            (labelled? %)))
+                            (labelled? %)
+                            (member? %)))
               by-priority
               first
               compact-card))))
@@ -1501,7 +1519,8 @@
             :hook-class :read :deadline-class :standard}
     "next" {:doc "Return the highest-priority (p1 first) oldest active pending feature card."
             :flags {:label {:repeat? true
-                            :doc "Only cards carrying this label; repeat to require all of them."}}
+                            :doc "Only cards carrying this label; repeat to require all of them."}
+                    :epic {:doc "Only this epic's direct features; fails on a non-epic id."}}
             :hook-class :read :deadline-class :standard}
     "label" {:doc "Manage a card's free-form labels."
              :subcommands
@@ -1587,7 +1606,8 @@
                        (get flags "--label")
                        (boolean (get flags "--all")))
       ["card"] (card-view runtime (:id args))
-      ["next"] {:operation "kanban next" :next (next-card runtime (get flags "--label"))}
+      ["next"] {:operation "kanban next"
+                :next (next-card runtime (get flags "--label") (get flags "--epic"))}
       ["priority"] (set-priority! runtime (:id args) (:priority args))
       ["label" "add"] (label-add! runtime (:id args) (:labels args))
       ["label" "rm"] (label-rm! runtime (:id args) (:labels args))
@@ -1722,7 +1742,16 @@
    :queries {"kanban-cards" [:= [:attr "kanban/card"] "true"]
              "kanban-pending" [:and [:= :state "active"]
                                [:= [:attr "kanban/card"] "true"]
-                               [:= [:attr "kanban/lane"] "pending"]]}})
+                               [:= [:attr "kanban/lane"] "pending"]]
+             ;; `strand ready --query kanban-epic-pending --param epic=<id>` is
+             ;; the frontier read for a loop working one epic: readiness
+             ;; (depends-on unblocked) comes from the ready overlay, the query
+             ;; scopes it to the epic's own pending cards.
+             "kanban-epic-pending" {:params [:epic]
+                                    :where [:and [:= :state "active"]
+                                            [:= [:attr "kanban/card"] "true"]
+                                            [:= [:attr "kanban/lane"] "pending"]
+                                            [:edge/in "parent-of" [:= :id [:param :epic]]]]}}})
 
 (defn reconcile
   "Reconcile kanban's non-registry runtime state around module publication."
