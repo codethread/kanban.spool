@@ -5,10 +5,10 @@
 
 Opt-in board peering: the RECEIVE guild op plus the SEND-side local ops.
 
-  A trusted-config module wires `ct.spools.kanban/install-peering!` in after
-  the guild and kanban modules are active (both are module-lifecycle
-  activations; the prerequisites fail loudly when missing). That entry point
-  registers three ops:
+  A trusted-config module activates this namespace after the guild and kanban
+  modules. Static forms publish the two local operations, and a named lifecycle
+  resource registers the Guild receiver; the prerequisites fail loudly when
+  missing:
 
   - `kanban.send.v1` — the guild receive op. A sibling weaver drops a card, or
     an epic bundle, onto this board. Received cards travel the same
@@ -34,98 +34,42 @@ Opt-in board peering: the RECEIVE guild op plus the SEND-side local ops.
 
 
 
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L228-L228">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L229-L229">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban.peering/*list-peers*">`*list-peers*`</a>
 
 
 
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L227-L227">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L228-L228">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban.peering/*send-card*">`*send-card*`</a>
 
 
 
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L229-L229">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L230-L230">Source</a></sub></p>
 
-## <a name="ct.spools.kanban.peering/contribute">`contribute`</a>
+## <a name="ct.spools.kanban.peering/close-peering!">`close-peering!`</a>
 ``` clojure
-(contribute _ctx)
+(close-peering! _context)
 ```
 Function.
 
-Return the complete owner set for peering's local CLI declarations.
+Close peering's module resource without claiming Guild's dispatch-table teardown.
 
-  Guild owns its dispatch facade and receive-op table; `reconcile` below keeps
-  the `kanban.send.v1` handler in that table.  The two board-local operations
-  are ordinary core registry entries, so publishing them here gives refresh its
-  deletion semantics without ad-hoc register-or-replace probing.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L667-L684">Source</a></sub></p>
+  Guild owns receiver registration and has no per-op removal seam in this
+  baseline. Its own lifecycle reset removes receivers; this close therefore
+  preserves the established process-lifetime receiver behavior while static
+  peering operations retract with their module owner.
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L717-L725">Source</a></sub></p>
 
-## <a name="ct.spools.kanban.peering/install-peering!">`install-peering!`</a>
+## <a name="ct.spools.kanban.peering/open-peering!">`open-peering!`</a>
 ``` clojure
-(install-peering! runtime)
+(open-peering! {:keys [runtime]})
 ```
 Function.
 
-Register the receive and send-side board-peering ops after guild and kanban.
-
-  Opt-in: trusted config wires this in after the guild and kanban modules are
-  active. It never activates guild itself — guild's lifecycle has exactly one
-  owner, the repo config. Both preconditions fail loudly with the failing state
-  and the remedy. Registers three ops: the `kanban.send.v1` guild receive op,
-  and the local `kanban-peers` and `kanban-send` ops. Every registration
-  upserts (`guild/register-op!` and `register-or-replace-op!`), so re-running
-  is reload-safe.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L731-L763">Source</a></sub></p>
-
-## <a name="ct.spools.kanban.peering/peers-op">`peers-op`</a>
-``` clojure
-(peers-op #:op{:keys [runtime]})
-```
-Function.
-
-List sibling weavers and whether each accepts peered kanban cards.
-
-  Every metadata row from `peers/peers` is listed, including stale ones
-  (`:running? false`), which are never probed. Each running non-self peer is
-  probed via `guild list`; `:kanban-send? true` when `kanban.send.v1` is
-  active. The local weaver is marked `:self? true` when it appears in the roster
-  and answers from the local op registry rather than calling its own socket. The
-  return conforms to `::peers-result` (rows to `::peer-row`).
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L299-L324">Source</a></sub></p>
-
-## <a name="ct.spools.kanban.peering/reconcile">`reconcile`</a>
-``` clojure
-(reconcile {:keys [runtime], :as ctx})
-```
-Function.
-
-Reconcile Guild's receive table after local owner publication.
-
-  Guild has the receive-dispatch state in this frozen baseline; its supported
-  registrar is idempotent, preserving the established wire contract and seams.
-  Local board operations themselves are entirely owner-published by
-  `contribute`.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L704-L721">Source</a></sub></p>
-
-## <a name="ct.spools.kanban.peering/send-card-op">`send-card-op`</a>
-``` clojure
-(send-card-op #:op{:keys [args runtime runtime-metadata]})
-```
-Function.
-
-Send a local card or epic bundle to a sibling weaver's board.
-
-  Resolves the local card, refuses in-flight or finished work (with the lane in
-  the error), and mirrors the board tier — titles, bodies, priority, source, and
-  lane — as a `kanban.send.v1` payload stamped with `:from` provenance. Preflights
-  the target's `guild list` for the op, sends the payload as one JSON `:argv`
-  string, and validates the peer's reply (`validate-send-result!`) before
-  recording the created remote ids as a note on the local card. Returns the
-  remote ids, conforming to `::send-result`. The local card's lane is never
-  touched — closing it stays the caller's choice.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L599-L623">Source</a></sub></p>
+Register the guarded `kanban.send.v1` receiver through Guild's supported seam.
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L702-L715">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban.peering/send-op">`send-op`</a>
 ``` clojure
@@ -140,15 +84,4 @@ Receive a peered card or epic bundle onto this board.
   `:features` bundle creates the epic and hangs each feature under it with a
   `parent-of` edge (same path as `kanban add --epic`), preserving input order.
   Returns JSON-safe ids only.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L184-L202">Source</a></sub></p>
-
-## <a name="ct.spools.kanban.peering/spool">`spool`</a>
-
-
-
-
-Entry-point declaration for the kanban peering spool.
-
-  Consumers declare only its source target and world policy. Unqualified
-  symbols resolve against this namespace.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L723-L729">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L185-L203">Source</a></sub></p>

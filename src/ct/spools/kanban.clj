@@ -21,11 +21,12 @@
             [clojure.string :as str]
             [skein.api.notes.alpha :as notes]
             [skein.api.graph.alpha :as graph]
+            [skein.api.lifecycle.alpha :as lifecycle]
             [skein.api.vocab.alpha :as vocab]
             [skein.api.weaver.alpha :as weaver]
-            [skein.api.weaver.internal.op-entry :as op-entry]
             [skein.api.format.alpha :as fmt]
             [skein.api.runtime.alpha :as runtime]
+            [skein.api.skein.alpha :as skein]
             [skein.api.spool.alpha :refer [attr-get entity-projection fail! reject-unknown-keys!]]))
 
 (def ^:private card-attr :kanban/card)
@@ -273,7 +274,8 @@
   [key]
   (symbol key))
 
-(defn kanban-batch
+#_{:clj-kondo/ignore [:unresolved-symbol]}
+(skein/defpattern kanban-batch
   "Create pending feature cards with bodies and depends-on edges.
 
   Input shape: {:items [{:key \"slug\" :title \"Title\" :body \"optional\"
@@ -281,6 +283,7 @@
   :depends-on [\"sibling-key-or-existing-strand-id\"]}]}. `depends-on` values matching sibling
   keys become batch-local edges; all other values are treated as durable strand
   ids and fail loudly if absent."
+  {:spec ::kanban-batch-input}
   [{:keys [input]}]
   (let [{:keys [items]} input
         keys (mapv :key items)]
@@ -1613,7 +1616,7 @@
                   [(str "--" (name k)) v])))
         args))
 
-(defn kanban-op
+(defn- dispatch-kanban-op
   "Dispatch parsed `strand kanban ...` subcommands."
   [{:op/keys [args runtime]}]
   (let [flags (legacy-flags args)]
@@ -1666,7 +1669,7 @@
        (sort-by (juxt :from_strand_id :to_strand_id :edge_type))
        (mapv #(select-keys % [:from_strand_id :to_strand_id :edge_type]))))
 
-(defn kanban-export-op
+(defn- export-card-op
   "Handle `strand kanban-export <card-id>`: a card's full parent-of subtree
   with its internal depends-on edges.
 
@@ -1735,71 +1738,66 @@
    :doc "Open per-label marker keys: `kanban.label/<slug>` is \"true\" on every card carrying <slug>."})
 
 (def ^:private kanban-op-options
-  {:doc "Manage the user-facing kanban work board. Run `strand kanban about` for the convention manual."
-   :arg-spec kanban-arg-spec :returns kanban-returns})
+  {:arg-spec kanban-arg-spec
+   :returns kanban-returns})
 
 (def ^:private kanban-export-op-options
-  {:doc "Return a card's full parent-of subtree with its internal depends-on edges."
-   :arg-spec kanban-export-arg-spec :returns kanban-export-returns})
+  {:arg-spec kanban-export-arg-spec
+   :returns kanban-export-returns})
 
-(defn contribute
-  "Return kanban's complete owner contribution for module publication.
+#_{:clj-kondo/ignore [:unresolved-symbol]}
+(skein/defop kanban
+  "Manage the user-facing kanban work board."
+  kanban-op-options
+  [ctx]
+  (dispatch-kanban-op ctx))
 
-  The keys deliberately cover every replaceable board declaration.  A later
-  refresh that omits one therefore removes it instead of retaining a stale
-  command, query, or pattern.  Vocabulary is runtime state rather than a core
-  owner registry, so reconcile owns its idempotent declaration."
-  [_ctx]
-  {:ops {"kanban" (op-entry/assemble 'kanban kanban-op-options
-                                     'ct.spools.kanban/kanban-op)
-         "kanban-export" (op-entry/assemble 'kanban-export kanban-export-op-options
-                                            'ct.spools.kanban/kanban-export-op)}
-   :patterns {"kanban-batch" {:name "kanban-batch"
-                              :doc "Create pending feature cards with bodies and depends-on edges."
-                              :fn 'ct.spools.kanban/kanban-batch
-                              :input-spec ::kanban-batch-input}}
-   :queries {"kanban-cards" [:= [:attr "kanban/card"] "true"]
-             "kanban-pending" [:and [:= :state "active"]
-                               [:= [:attr "kanban/card"] "true"]
-                               [:= [:attr "kanban/lane"] "pending"]]
-             ;; `strand ready --query kanban-epic-pending --param epic=<id>` is
-             ;; the frontier read for a loop working one epic: readiness
-             ;; (depends-on unblocked) comes from the ready overlay, the query
-             ;; scopes it to the epic's own pending cards.
-             "kanban-epic-pending" {:params [:epic]
-                                    :where [:and [:= :state "active"]
-                                            [:= [:attr "kanban/card"] "true"]
-                                            [:= [:attr "kanban/lane"] "pending"]
-                                            [:edge/in "parent-of" [:= :id [:param :epic]]]]}}})
+#_{:clj-kondo/ignore [:unresolved-symbol]}
+(skein/defop kanban-export
+  "Return a card's full parent-of subtree with its internal depends-on edges."
+  kanban-export-op-options
+  [ctx]
+  (export-card-op ctx))
 
-(defn reconcile
-  "Reconcile kanban's non-registry runtime state around module publication."
-  [{:keys [runtime] :as ctx}]
-  (if (= :removed (get-in ctx [:module/contribution :status]))
-    {:reconciled :removed}
-    (do (vocab/declare! runtime kanban-vocab)
-        (vocab/declare! runtime kanban-label-vocab)
-        (runtime/spool-state runtime ::state {:version state-version} new-state)
-        {:reconciled :applied})))
+#_{:clj-kondo/ignore [:unresolved-symbol]}
+(skein/defquery kanban-cards-query
+  "Select every Kanban card strand."
+  {}
+  [:= [:attr "kanban/card"] "true"])
 
-(def spool
-  "Entry-point declaration for the kanban spool (ADR-004 `def spool` convention).
+#_{:clj-kondo/ignore [:unresolved-symbol]}
+(skein/defquery kanban-pending-query
+  "Select active Kanban cards in the pending lane."
+  {}
+  [:and [:= :state "active"]
+   [:= [:attr "kanban/card"] "true"]
+   [:= [:attr "kanban/lane"] "pending"]])
 
-  The refresh coordinator resolves `:contribute`/`:reconcile` from this public
-  var at every module evaluation, so a consumer declares only a source target
-  and world policy (`{:ns 'ct.spools.kanban :spools ['codethread/kanban]}`) and
-  never mirrors the pair. Unqualified symbols resolve against this namespace;
-  fn values are rejected (ADR-002.O1)."
-  {:contribute 'contribute
-   :reconcile 'reconcile})
+#_{:clj-kondo/ignore [:unresolved-symbol]}
+(skein/defquery kanban-epic-pending-query
+  "Select active pending cards hanging directly under one epic."
+  {:usage "strand ready --query kanban-epic-pending --param epic=<id>"}
+  {:params [:epic]
+   :where [:and [:= :state "active"]
+           [:= [:attr "kanban/card"] "true"]
+           [:= [:attr "kanban/lane"] "pending"]
+           [:edge/in "parent-of" [:= :id [:param :epic]]]]})
 
-(defn install-peering!
-  "Register the opt-in `kanban.send.v1` board-peering receive op.
+(defn open-kanban!
+  "Declare Kanban vocabulary and materialize its process-lifetime runtime state."
+  [{:keys [runtime]}]
+  (vocab/declare! runtime kanban-vocab)
+  (vocab/declare! runtime kanban-label-vocab)
+  (runtime/spool-state runtime ::state {:version state-version} new-state)
+  {:opened :kanban})
 
-  A separate opt-in entry point wired into trusted config after the guild
-  module and the kanban module are active. Delegates to
-  `ct.spools.kanban.peering/install-peering!` via `requiring-resolve` so the base
-  kanban spool never load-depends on the guild spool; peering (and its guild
-  dependency) load only when a repo opts in."
-  [runtime]
-  ((requiring-resolve 'ct.spools.kanban.peering/install-peering!) runtime))
+(defn close-kanban!
+  "Close Kanban's module resource without retracting process-lifetime state."
+  [_context]
+  {:closed :kanban})
+
+#_{:clj-kondo/ignore [:unresolved-symbol]}
+(lifecycle/defresource kanban-runtime
+  "Own Kanban vocabulary and runtime-state setup for the module lifetime."
+  {:open 'ct.spools.kanban/open-kanban!
+   :close 'ct.spools.kanban/close-kanban!})

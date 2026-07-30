@@ -1,7 +1,6 @@
 (ns ct.spools.kanban-test
   "Tests for the kanban board spool against a disposable weaver runtime."
   (:require [clojure.set :as set]
-            [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [skein.api.graph.alpha :as graph]
@@ -15,11 +14,22 @@
             [ct.spools.kanban-peering-test]
             [skein.test.alpha :as t]))
 
-(deftest spool-declaration-is-exact-and-valid
-  (is (= {:contribute 'contribute
-          :reconcile 'reconcile}
-         kanban/spool))
-  (is (s/valid? ::spool/spool kanban/spool)))
+(defn- public-value [var-sym]
+  (some-> (ns-resolve 'ct.spools.kanban var-sym) var-get))
+
+(deftest authored-module-exposes-forms-without-legacy-entry-points
+  (is (fn? (public-value 'kanban-op)))
+  (is (fn? (public-value 'kanban-export-op)))
+  (is (fn? (public-value 'kanban-batch)))
+  (is (= {:kind :resource
+          :open 'ct.spools.kanban/open-kanban!
+          :close 'ct.spools.kanban/close-kanban!
+          :after #{}
+          :scope :module}
+         (public-value 'kanban-runtime)))
+  (doseq [legacy '[spool contribute reconcile install-peering!]]
+    (is (nil? (ns-resolve 'ct.spools.kanban legacy))
+        (str legacy " must not remain as a callback or compatibility shim"))))
 
 (deftest explicit-runtime-apis-isolate-unpublished-worlds
   (t/run-with-weaver-world
@@ -57,25 +67,89 @@
               :checkpoint false :extra "trimmed by kanban"}]}
     {:status nil :ready []}))
 
+(defn- activate-kanban!
+  "Activate Kanban from source so its authoring forms are collected."
+  [rt]
+  (let [result (runtime/module! rt :kanban {:ns 'ct.spools.kanban})
+        status (get-in result [:modules :kanban :status])]
+    (when-not (contains? #{:applied :unchanged} status)
+      (throw (ex-info "kanban module activation failed"
+                      {:module/key :kanban :module/status status :result result})))
+    result))
+
 (defn- with-kanban
   "Run f with a fresh weaver runtime that has the kanban module active.
 
   The runtime lifecycle and isolation come from the public author test helper
   (`skein.test.alpha/with-weaver-world`). kanban ships on this repo's src
-  classpath, so it activates in image mode from a declaration that
-  names only the namespace; the entry points come from kanban's own `spool`
-  var. Throws with the refresh result unless the module applied."
+  classpath, so source activation collects its static declarations. Throws with
+  the refresh result unless the module applied."
   [f]
   (t/run-with-weaver-world
    {:storage :sqlite-memory}
    (fn [ctx]
-     (let [rt (:runtime ctx)
-           result (runtime/module! rt :kanban {:ns 'ct.spools.kanban :load :image})
-           status (get-in result [:modules :kanban :status])]
-       (when-not (contains? #{:applied :unchanged} status)
-         (throw (ex-info "kanban module activation failed"
-                         {:module/key :kanban :module/status status :result result})))
+     (let [rt (:runtime ctx)]
+       (activate-kanban! rt)
        (f rt)))))
+
+(defn- kanban-surface [rt]
+  {:ops (->> (weaver/ops rt)
+             (filter #(= 'ct.spools.kanban (:provenance %)))
+             (map (juxt :name identity))
+             (into (sorted-map)))
+   :patterns (->> (patterns/patterns rt)
+                  (filter #(= "kanban-batch" (:name %)))
+                  vec)
+   :queries (select-keys (graph/queries rt)
+                         ["kanban-cards" "kanban-pending" "kanban-epic-pending"])})
+
+(deftest source-and-image-activation-publish-the-same-kanban-surface
+  (t/run-with-weaver-world
+   {:storage :sqlite-memory}
+   (fn [ctx]
+     (let [rt (:runtime ctx)
+           source-result (activate-kanban! rt)
+           source-surface (kanban-surface rt)
+           image-result (runtime/module! rt :kanban
+                                         {:ns 'ct.spools.kanban :load :image})
+           image-surface (kanban-surface rt)]
+       (is (= :loaded (get-in source-result [:modules :kanban :source/status])))
+       (is (= :image (get-in image-result [:modules :kanban :source/status])))
+       (is (= source-surface image-surface)
+           "image replay publishes the normalized source declaration record")
+       (is (= #{"kanban" "kanban-export"} (set (keys (:ops source-surface)))))
+       (is (= ["kanban-batch"] (mapv :name (:patterns source-surface))))
+       (is (= #{"kanban-cards" "kanban-pending" "kanban-epic-pending"}
+              (set (keys (:queries source-surface)))))))))
+
+(deftest omitting-kanban-retracts-static-entries-and-closes-its-resource
+  (let [init-source
+        (str "(require '[skein.api.current.alpha :as current]\n"
+             "         '[skein.api.runtime.alpha :as runtime])\n"
+             "(def runtime (current/runtime))\n"
+             "(runtime/module! runtime :kanban {:ns 'ct.spools.kanban})\n")]
+    (t/run-with-weaver-world
+     {:storage :sqlite-memory
+      :init init-source}
+     (fn [ctx]
+       (let [rt (:runtime ctx)
+             id (get-in (kanban/add! rt "Retained card" {}) [:card :id])]
+         (kanban/set-tracker! rt {:name "stub"
+                                  :project 'ct.spools.kanban-test/stub-projection})
+         (spit (str (:config-dir ctx) "/init.clj") "")
+         (let [removed (runtime/refresh! rt)]
+           (is (= :removed (get-in removed [:modules :kanban :status])))
+           (is (= :removed
+                  (get-in removed
+                          [:modules :kanban :lifecycle/outcomes
+                           :kanban-runtime :status])))
+           (is (empty? (:ops (kanban-surface rt))))
+           (is (empty? (:patterns (kanban-surface rt))))
+           (is (empty? (:queries (kanban-surface rt))))
+           (is (= [id] (mapv :id (:pending (kanban/board rt))))
+               "stored cards survive module removal")
+           (is (str/includes? (:tracker (kanban/about rt)) "Bound tracker: stub")
+               "the accepted process-lifetime tracker state survives removal")))))))
 
 (defn- op! [rt & argv]
   (weaver/op! rt 'kanban argv))
@@ -124,7 +198,7 @@
       (let [decl (->> (vocab/declarations rt {:kind :attr-namespace})
                       (filter #(= "kanban" (:name %)))
                       first)]
-        (is (some? decl) "module reconcile declares the kanban/* attribute namespace")
+        (is (some? decl) "the module resource declares the kanban/* attribute namespace")
         (is (= :skein/spools-kanban (:owner decl))
             "kanban/* is owned by the single verified use-key :skein/spools-kanban")
         (is (every? #(str/starts-with? % "kanban/") (:keys decl))
@@ -139,11 +213,13 @@
   ;; list is accretion, but the previous marker's frozen copy of this test
   ;; pins the old set, so compat-alarm reports exactly one expected failure
   ;; here at each accreting release — record it in the release tag message.
-  (let [contribution (kanban/contribute {})]
-    (is (= #{"kanban" "kanban-export"} (set (keys (:ops contribution)))))
-    (is (= #{"kanban-batch"} (set (keys (:patterns contribution)))))
-    (is (= #{"kanban-cards" "kanban-pending" "kanban-epic-pending"}
-           (set (keys (:queries contribution)))))))
+  (with-kanban
+    (fn [rt]
+      (let [surface (kanban-surface rt)]
+        (is (= #{"kanban" "kanban-export"} (set (keys (:ops surface)))))
+        (is (= ["kanban-batch"] (mapv :name (:patterns surface))))
+        (is (= #{"kanban-cards" "kanban-pending" "kanban-epic-pending"}
+               (set (keys (:queries surface)))))))))
 
 (deftest kanban-about-commands-match-declared-subcommands
   (with-kanban

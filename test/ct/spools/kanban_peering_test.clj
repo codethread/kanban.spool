@@ -11,17 +11,29 @@
             [skein.spools.guild]
             [skein.api.graph.alpha :as graph]
             [skein.api.runtime.alpha :as runtime]
-            [skein.api.spool.alpha :as spool]
             [skein.api.weaver.alpha :as weaver]
             [ct.spools.kanban :as kanban]
             [ct.spools.kanban.peering :as peering]
             [skein.test.alpha :as t]))
 
-(deftest spool-declaration-is-exact-and-valid
-  (is (= {:contribute 'contribute
-          :reconcile 'reconcile}
-         peering/spool))
-  (is (s/valid? ::spool/spool peering/spool)))
+(defn- public-value [var-sym]
+  (some-> (ns-resolve 'ct.spools.kanban.peering var-sym) var-get))
+
+(defn- peers-op [context]
+  ((public-value 'kanban-peers-op) context))
+
+(deftest authored-module-exposes-forms-without-legacy-entry-points
+  (is (fn? (public-value 'kanban-peers-op)))
+  (is (fn? (public-value 'kanban-send-op)))
+  (is (= {:kind :resource
+          :open 'ct.spools.kanban.peering/open-peering!
+          :close 'ct.spools.kanban.peering/close-peering!
+          :after #{}
+          :scope :module}
+         (public-value 'kanban-peering-receiver)))
+  (doseq [legacy '[spool contribute reconcile install-peering!]]
+    (is (nil? (ns-resolve 'ct.spools.kanban.peering legacy))
+        (str legacy " must not remain as a callback or compatibility shim"))))
 
 (defn- with-world
   "Run (f rt) inside a fresh bound weaver runtime after running (setup rt)."
@@ -49,24 +61,34 @@
                       {:module/key :guild :module/status status :result result})))))
 
 (defn- activate-kanban!
-  "Activate the kanban spool module on `rt` from the loaded JVM image.
-
-  The ns require of `ct.spools.kanban` guarantees the namespace is
-  image-loaded, so the declaration names only the namespace and `:load :image`
-  and the entry points come from kanban's own `spool` var. Throws with the
-  refresh result unless the module applied."
+  "Activate the forms-only kanban module from source."
   [rt]
-  (let [result (runtime/module! rt :kanban {:ns 'ct.spools.kanban :load :image})
+  (let [result (runtime/module! rt :kanban {:ns 'ct.spools.kanban})
         status (get-in result [:modules :kanban :status])]
     (when-not (contains? #{:applied :unchanged} status)
       (throw (ex-info "kanban module activation failed"
-                      {:module/key :kanban :module/status status :result result})))))
+                      {:module/key :kanban :module/status status :result result})))
+    result))
+
+(defn- activate-peering!
+  "Activate the forms-only peering module after Guild and Kanban."
+  [rt]
+  (let [result (runtime/module! rt :kanban/peering
+                                {:ns 'ct.spools.kanban.peering
+                                 :after [:guild :kanban]})
+        status (get-in result [:modules :kanban/peering :status])]
+    (when-not (contains? #{:applied :unchanged} status)
+      (throw (ex-info "kanban peering module activation failed"
+                      {:module/key :kanban/peering
+                       :module/status status
+                       :result result})))
+    result))
 
 (defn- with-peering
   "Run (f rt) with guild, kanban, and kanban peering active in order."
   [f]
   (with-world
-    (fn [rt] (activate-guild! rt) (activate-kanban! rt) (kanban/install-peering! rt))
+    (fn [rt] (activate-guild! rt) (activate-kanban! rt) (activate-peering! rt))
     f))
 
 (defn- send!
@@ -74,62 +96,142 @@
   [rt input]
   (weaver/op! rt 'kanban.send.v1 [(json/write-str input)]))
 
-(deftest install-peering-requires-guild-first
+(defn- peering-ops [rt]
+  (->> (weaver/ops rt)
+       (filter #(= 'ct.spools.kanban.peering (:provenance %)))
+       (map (juxt :name identity))
+       (into (sorted-map))))
+
+(deftest peering-lifecycle-requires-guild-first
   ;; precondition (a): guild must already be registered
   (with-world
     activate-kanban!
     (fn [rt]
       (let [ex (is (thrown-with-msg? clojure.lang.ExceptionInfo
                                      #"requires the guild module"
-                                     (kanban/install-peering! rt)))
+                                     (peering/open-peering! {:runtime rt})))
             remedy (:remedy (ex-data ex))]
         (is (= "guild" (:missing (ex-data ex))))
         (is (str/includes? remedy "skein.spools.guild"))
         (is (str/includes? remedy "skein.spools/guild"))))))
 
-(deftest peering-owner-contribution-covers-both-local-ops
+(deftest peering-owner-surface-covers-both-local-ops
   ;; The receive operation remains Guild's dispatch-table declaration; these
   ;; are the two core-registry entries this module owns and replaces together.
-  (is (= #{"kanban-peers" "kanban-send"}
-         (set (keys (:ops (peering/contribute {})))))))
+  (with-peering
+    (fn [rt]
+      (is (= #{"kanban-peers" "kanban-send"}
+             (->> (weaver/ops rt)
+                  (filter #(= 'ct.spools.kanban.peering (:provenance %)))
+                  (map :name)
+                  set))))))
 
-(deftest install-peering-requires-kanban-first
+(deftest peering-lifecycle-requires-kanban-first
   ;; precondition (b): the kanban board module must already be active
   (with-world
     activate-guild!
     (fn [rt]
       (let [ex (is (thrown-with-msg? clojure.lang.ExceptionInfo
                                      #"requires the kanban module"
-                                     (kanban/install-peering! rt)))
+                                     (peering/open-peering! {:runtime rt})))
             remedy (:remedy (ex-data ex))]
         (is (= "kanban" (:missing (ex-data ex))))
         (is (str/includes? remedy "ct.spools.kanban"))
         (is (str/includes? remedy "codethread/kanban"))))))
 
-(deftest install-peering-registers-op-and-returns-data
+(deftest peering-lifecycle-registers-the-guild-receiver
   (with-world
     (fn [rt] (activate-guild! rt) (activate-kanban! rt))
     (fn [rt]
-      (let [result (kanban/install-peering! rt)]
-        (is (true? (:installed result)))
-        (is (= 'ct.spools.kanban.peering (:namespace result)))
+      (let [result (activate-peering! rt)]
+        (is (= :applied
+               (get-in result
+                       [:modules :kanban/peering :lifecycle/outcomes
+                        :kanban-peering-receiver :status])))
         (is (some #(= "kanban.send.v1" (:name %)) (weaver/ops rt)))
         (testing "guild list advertises the receive op"
           (let [listed (weaver/op! rt 'guild ["list"])]
             (is (some #(= "kanban.send.v1" (:name %)) (:active listed)))))))))
 
-(deftest install-peering-is-reload-safe
+(deftest peering-lifecycle-is-reload-safe
   (with-peering
     (fn [rt]
-     ;; with-peering installed peering once already; guild/register-op! is upsert, so a
-     ;; second install-peering! must not duplicate the op or break dispatch
-      (let [again (kanban/install-peering! rt)]
-        (is (true? (:installed again)))
-        (is (= 'ct.spools.kanban.peering (:namespace again)))
+     ;; A source refresh preserves the healthy lifecycle resource and does not
+     ;; duplicate or break Guild's dispatch entry.
+      (let [again (activate-peering! rt)]
+        (is (= [:kanban-peering-receiver]
+               (get-in again
+                       [:modules :kanban/peering :lifecycle/plan :preserve])))
         (is (= 1 (count (filter #(= "kanban.send.v1" (:name %)) (weaver/ops rt))))
-            "re-running install-peering! upserts a single op, never duplicates"))
+            "refresh keeps a single Guild receiver"))
       (let [id (get-in (send! rt {:card {:title "After reload"}}) [:card :id])]
         (is (= "After reload" (:title (weaver/show rt id))))))))
+
+(deftest source-and-image-activation-publish-the-same-peering-surface
+  (with-world
+    (fn [rt] (activate-guild! rt) (activate-kanban! rt))
+    (fn [rt]
+      (let [source-result (activate-peering! rt)
+            source-ops (peering-ops rt)
+            image-result (runtime/module! rt :kanban/peering
+                                          {:ns 'ct.spools.kanban.peering
+                                           :load :image
+                                           :after [:guild :kanban]})
+            image-ops (peering-ops rt)]
+        (is (= :loaded
+               (get-in source-result
+                       [:modules :kanban/peering :source/status])))
+        (is (= :image
+               (get-in image-result
+                       [:modules :kanban/peering :source/status])))
+        (is (= source-ops image-ops)
+            "image replay publishes the normalized source declaration record")
+        (is (= #{"kanban-peers" "kanban-send"} (set (keys source-ops))))
+        (is (= [:kanban-peering-receiver]
+               (get-in image-result
+                       [:modules :kanban/peering :lifecycle/plan :preserve])))
+        (is (= 1 (count (filter #(= "kanban.send.v1" (:name %))
+                                (weaver/ops rt)))))))))
+
+(deftest omitting-peering-retracts-local-ops-and-preserves-guild-receiver
+  (let [preamble
+        (str "(require '[skein.api.current.alpha :as current]\n"
+             "         '[skein.api.runtime.alpha :as runtime])\n"
+             "(def runtime (current/runtime))\n")
+        guild-and-kanban
+        (str preamble
+             "(runtime/module! runtime :guild\n"
+             "  {:ns 'skein.spools.guild :load :image})\n"
+             "(runtime/module! runtime :kanban\n"
+             "  {:ns 'ct.spools.kanban :after [:guild]})\n")
+        with-peering-init
+        (str guild-and-kanban
+             "(runtime/module! runtime :kanban/peering\n"
+             "  {:ns 'ct.spools.kanban.peering\n"
+             "   :after [:guild :kanban]})\n")]
+    (t/run-with-weaver-world
+     {:storage :sqlite-memory
+      :init with-peering-init}
+     (fn [ctx]
+       (let [rt (:runtime ctx)]
+         (is (= #{"kanban-peers" "kanban-send"} (set (keys (peering-ops rt)))))
+         (spit (str (:config-dir ctx) "/init.clj") guild-and-kanban)
+         (let [removed (runtime/refresh! rt)]
+           (is (= :removed
+                  (get-in removed [:modules :kanban/peering :status])))
+           (is (= :removed
+                  (get-in removed
+                          [:modules :kanban/peering :lifecycle/outcomes
+                           :kanban-peering-receiver :status])))
+           (is (empty? (peering-ops rt))
+               "owner omission retracts the two local operations")
+           (is (= 1 (count (filter #(= "kanban.send.v1" (:name %))
+                                   (weaver/ops rt))))
+               "Guild retains its process-lifetime dispatch entry")
+           (let [id (get-in (send! rt {:card {:title "After omission"}})
+                            [:card :id])]
+             (is (= "After omission" (:title (weaver/show rt id)))
+                 "the retained Guild receiver keeps its wire semantics"))))))))
 
 (deftest send-single-card-uses-local-add-defaults
   (with-peering
@@ -478,7 +580,7 @@
                       "advertiser" (guild-list-with "kanban.send.v1" "gate.status.v1")
                       "plain" (throw (ex-info "unknown op" {:code :peer/domain-error}))
                       (throw (ex-info "unexpected probe" {:row row}))))]
-          (let [result (peering/peers-op {:op/runtime rt})
+          (let [result (peers-op {:op/runtime rt})
                 by-name (into {} (map (juxt :name identity)) (:peers result))]
             (is (= "kanban-peers" (:operation result)))
             (testing "an advertising running peer is a send target"
@@ -502,13 +604,13 @@
         ;; TEN-003: only an unknown-op domain error classifies as non-peering; a
         ;; transport failure must never be swallowed into :kanban-send? false
         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"socket down"
-                              (peering/peers-op {:op/runtime rt})))))))
+                              (peers-op {:op/runtime rt})))))))
 
-(deftest install-peering-registers-both-send-side-ops
+(deftest peering-forms-register-both-send-side-ops
   (with-world
     (fn [rt] (activate-guild! rt) (activate-kanban! rt))
     (fn [rt]
-      (kanban/install-peering! rt)
+      (activate-peering! rt)
       (let [ops (into {} (map (juxt :name identity)) (weaver/ops rt))]
         (testing "kanban-peers is a read op with its arg-spec and returns"
           (let [entry (get ops "kanban-peers")]
@@ -523,15 +625,15 @@
             (is (= [:peer :card-id] (mapv :name (get-in entry [:arg-spec :positionals]))))
             (is (some? (:returns entry)))))))))
 
-(deftest install-peering-upserts-both-send-side-ops
+(deftest peering-source-refresh-preserves-both-send-side-ops
   (with-peering
     (fn [rt]
-      ;; with-peering installed once; a second install-peering! (config reload)
-      ;; must upsert rather than collide on the already-registered names
-      (is (map? (kanban/install-peering! rt)))
+      ;; with-peering active once, a second source refresh preserves the
+      ;; owner-complete entries without collision
+      (is (map? (activate-peering! rt)))
       (doseq [op-name ["kanban-peers" "kanban-send"]]
         (is (= 1 (count (filter #(= op-name (:name %)) (weaver/ops rt))))
-            (str "re-running install-peering! keeps a single " op-name))))))
+            (str "source refresh keeps a single " op-name))))))
 
 ;; ---------------------------------------------------------------------------
 ;; send side: protocol- and result-shape validation (fail loud, no silent drops)
@@ -547,12 +649,12 @@
           (binding [peering/*list-peers* (fn [] row)
                     peering/*list-peer-guild* (fn [_] {"guild" "peer"})]
             (is (thrown-with-msg? clojure.lang.ExceptionInfo #"malformed envelope"
-                                  (peering/peers-op {:op/runtime rt})))))
+                                  (peers-op {:op/runtime rt})))))
         (testing "an active entry without a string name is rejected"
           (binding [peering/*list-peers* (fn [] row)
                     peering/*list-peer-guild* (fn [_] {"active" [{"nope" 1}]})]
             (is (thrown-with-msg? clojure.lang.ExceptionInfo #"malformed envelope"
-                                  (peering/peers-op {:op/runtime rt})))))))))
+                                  (peers-op {:op/runtime rt})))))))))
 
 (deftest send-preflight-fails-loud-on-a-malformed-guild-list-envelope
   (with-peering

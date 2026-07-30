@@ -1,10 +1,10 @@
 (ns ct.spools.kanban.peering
   "Opt-in board peering: the RECEIVE guild op plus the SEND-side local ops.
 
-  A trusted-config module wires `ct.spools.kanban/install-peering!` in after
-  the guild and kanban modules are active (both are module-lifecycle
-  activations; the prerequisites fail loudly when missing). That entry point
-  registers three ops:
+  A trusted-config module activates this namespace after the guild and kanban
+  modules. Static forms publish the two local operations, and a named lifecycle
+  resource registers the Guild receiver; the prerequisites fail loudly when
+  missing:
 
   - `kanban.send.v1` — the guild receive op. A sibling weaver drops a card, or
     an epic bundle, onto this board. Received cards travel the same
@@ -27,9 +27,10 @@
             [clojure.string :as str]
             [skein.api.format.alpha :as fmt]
             [skein.api.graph.alpha :as graph]
+            [skein.api.lifecycle.alpha :as lifecycle]
             [skein.api.peers.alpha :as peers]
+            [skein.api.skein.alpha :as skein]
             [skein.api.weaver.alpha :as weaver]
-            [skein.api.weaver.internal.op-entry :as op-entry]
             [skein.api.spool.alpha :refer [attr-get fail!]]
             [ct.spools.kanban :as kanban]))
 
@@ -296,7 +297,7 @@
         false
         (throw ex)))))
 
-(defn peers-op
+(defn- peers-result
   "List sibling weavers and whether each accepts peered kanban cards.
 
   Every metadata row from `peers/peers` is listed, including stale ones
@@ -522,14 +523,14 @@
                    (if (domain-error? ex)
                      (fail! "Target peer runs no guild API and cannot accept kanban.send.v1"
                             {:peer peerish
-                             :remedy "activate the guild module and run kanban install-peering! on the target"})
+                             :remedy "activate the guild and kanban peering modules on the target"})
                      (throw ex))))]
     (validate-guild-list! peerish listed)
     (when-not (advertises-send? listed)
       (fail! "Target peer does not advertise kanban.send.v1 (no kanban peering, or an older kanban)"
              {:peer peerish
               :active (mapv #(get % "name") (get listed "active"))
-              :remedy "run kanban install-peering! on the target after activating guild"}))
+              :remedy "activate the kanban peering module on the target after guild and kanban"}))
     listed))
 
 ;; The remote kanban.send.v1 result rides back JSON-decoded (string keys). Its
@@ -596,7 +597,7 @@
     (str "Sent to peer " peer " as epic " (get-in sent [:epic :id])
          " with features " (str/join ", " (map :id (:features sent))) ".")))
 
-(defn send-card-op
+(defn- send-card-result
   "Send a local card or epic bundle to a sibling weaver's board.
 
   Resolves the local card, refuses in-flight or finished work (with the lane in
@@ -623,7 +624,7 @@
                     "kanban-send"))))
 
 ;; ---------------------------------------------------------------------------
-;; install-peering!: opt-in registration of the receive and send-side ops
+;; Static local operations and Guild receiver lifecycle
 ;; ---------------------------------------------------------------------------
 
 (def ^:private send-returns
@@ -664,100 +665,67 @@
               :peer :string
               :sent :json}})
 
-(defn contribute
-  "Return the complete owner set for peering's local CLI declarations.
-
-  Guild owns its dispatch facade and receive-op table; `reconcile` below keeps
-  the `kanban.send.v1` handler in that table.  The two board-local operations
-  are ordinary core registry entries, so publishing them here gives refresh its
-  deletion semantics without ad-hoc register-or-replace probing."
-  [_ctx]
-  {:ops {"kanban-peers" (op-entry/assemble 'kanban-peers
-                                           {:doc (:doc kanban-peers-arg-spec)
-                                            :arg-spec kanban-peers-arg-spec
-                                            :returns kanban-peers-returns}
-                                           'ct.spools.kanban.peering/peers-op)
-         "kanban-send" (op-entry/assemble 'kanban-send
-                                          {:doc (:doc kanban-send-arg-spec)
-                                           :arg-spec kanban-send-arg-spec
-                                           :returns kanban-send-returns}
-                                          'ct.spools.kanban.peering/send-card-op)}})
-
 (defn- require-peering-prerequisites! [rt]
   (when-not (op-registered? rt "guild")
-    (fail! "kanban install-peering! requires the guild module to be active first"
+    (fail! "kanban peering activation requires the guild module to be active first"
            {:missing "guild" :registered-ops (mapv :name (weaver/ops rt))
             :remedy (fmt/reflow "
                      |Activate the guild module with
                      |(runtime/module! runtime :guild {:ns 'skein.spools.guild
                      |:spools ['skein.spools/guild] :required? true}) before
-                     |install-peering!.")}))
+                     |activating the kanban peering module.")}))
   (when-not (op-registered? rt "kanban")
-    (fail! "kanban install-peering! requires the kanban module to be active first"
+    (fail! "kanban peering activation requires the kanban module to be active first"
            {:missing "kanban" :registered-ops (mapv :name (weaver/ops rt))
             :remedy (fmt/reflow "
                      |Activate the kanban module with
                      |(runtime/module! runtime :kanban {:ns 'ct.spools.kanban
                      |:spools ['codethread/kanban] :required? true}) before
-                     |install-peering!.")})))
+                     |activating the kanban peering module.")})))
 
-(defn reconcile
-  "Reconcile Guild's receive table after local owner publication.
+#_{:clj-kondo/ignore [:unresolved-symbol]}
+(skein/defop kanban-peers
+  "List sibling weavers and whether each accepts peered kanban cards."
+  {:arg-spec kanban-peers-arg-spec
+   :returns kanban-peers-returns}
+  [ctx]
+  (peers-result ctx))
 
-  Guild has the receive-dispatch state in this frozen baseline; its supported
-  registrar is idempotent, preserving the established wire contract and seams.
-  Local board operations themselves are entirely owner-published by
-  `contribute`."
-  [{:keys [runtime] :as ctx}]
-  (if (= :removed (get-in ctx [:module/contribution :status]))
-    {:reconciled :removed}
-    (let [guild-register-op! (requiring-resolve 'skein.spools.guild/register-op!)]
-      (require-peering-prerequisites! runtime)
-      {:reconciled :applied
-       :op (guild-register-op! runtime 'kanban.send.v1
-                               {:doc "Receive a peered kanban card or epic bundle onto this board."
-                                :input-spec ::send-input :returns send-returns
-                                :hook-class :mutating :deadline-class :standard}
-                               'ct.spools.kanban.peering/send-op)})))
+#_{:clj-kondo/ignore [:unresolved-symbol]}
+(skein/defop kanban-send
+  "Send a pending or refinement card (or epic bundle) to a sibling weaver's board."
+  {:arg-spec kanban-send-arg-spec
+   :returns kanban-send-returns}
+  [ctx]
+  (send-card-result ctx))
 
-(def spool
-  "Entry-point declaration for the kanban peering spool.
-
-  Consumers declare only its source target and world policy. Unqualified
-  symbols resolve against this namespace."
-  {:contribute 'contribute
-   :reconcile 'reconcile})
-
-(defn install-peering!
-  "Register the receive and send-side board-peering ops after guild and kanban.
-
-  Opt-in: trusted config wires this in after the guild and kanban modules are
-  active. It never activates guild itself — guild's lifecycle has exactly one
-  owner, the repo config. Both preconditions fail loudly with the failing state
-  and the remedy. Registers three ops: the `kanban.send.v1` guild receive op,
-  and the local `kanban-peers` and `kanban-send` ops. Every registration
-  upserts (`guild/register-op!` and `register-or-replace-op!`), so re-running
-  is reload-safe."
-  [runtime]
+(defn open-peering!
+  "Register the guarded `kanban.send.v1` receiver through Guild's supported seam."
+  [{:keys [runtime]}]
   (let [guild-register-op! (requiring-resolve 'skein.spools.guild/register-op!)]
     (require-peering-prerequisites! runtime)
-    {:installed true
-     :namespace 'ct.spools.kanban.peering
-     :op (guild-register-op! runtime 'kanban.send.v1
-                             {:doc "Receive a peered kanban card or epic bundle onto this board."
-                              :input-spec ::send-input
-                              :returns send-returns
-                              :hook-class :mutating :deadline-class :standard}
-                             'ct.spools.kanban.peering/send-op)
-     :ops [(if (op-registered? runtime "kanban-peers")
-             (weaver/resolve-op runtime 'kanban-peers)
-             (weaver/register-op! runtime 'kanban-peers
-                                  {:doc (:doc kanban-peers-arg-spec) :arg-spec kanban-peers-arg-spec
-                                   :returns kanban-peers-returns}
-                                  'ct.spools.kanban.peering/peers-op))
-           (if (op-registered? runtime "kanban-send")
-             (weaver/resolve-op runtime 'kanban-send)
-             (weaver/register-op! runtime 'kanban-send
-                                  {:doc (:doc kanban-send-arg-spec) :arg-spec kanban-send-arg-spec
-                                   :returns kanban-send-returns}
-                                  'ct.spools.kanban.peering/send-card-op))]}))
+    (guild-register-op! runtime 'kanban.send.v1
+                        {:doc "Receive a peered kanban card or epic bundle onto this board."
+                         :input-spec ::send-input
+                         :returns send-returns
+                         :hook-class :mutating
+                         :deadline-class :standard}
+                        'ct.spools.kanban.peering/send-op)
+    {:opened :kanban-peering
+     :receiver "kanban.send.v1"}))
+
+(defn close-peering!
+  "Close peering's module resource without claiming Guild's dispatch-table teardown.
+
+  Guild owns receiver registration and has no per-op removal seam in this
+  baseline. Its own lifecycle reset removes receivers; this close therefore
+  preserves the established process-lifetime receiver behavior while static
+  peering operations retract with their module owner."
+  [_context]
+  {:closed :kanban-peering})
+
+#_{:clj-kondo/ignore [:unresolved-symbol]}
+(lifecycle/defresource kanban-peering-receiver
+  "Own guarded Guild receiver registration for the peering module lifetime."
+  {:open 'ct.spools.kanban.peering/open-peering!
+   :close 'ct.spools.kanban.peering/close-peering!})

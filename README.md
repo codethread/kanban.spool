@@ -22,13 +22,7 @@ render a card's subtree to a standalone HTML file offline (see kanban.md's
 
 ## Prerequisites
 
-- A Skein checkout/runtime at commit
-  `343f886880092bc38ed3e0522eca2d95a7cf04bc` or a descendant. That Phase A
-  merge introduced convention-resolved `spool` entry points; no Skein release
-  marker contains it yet, so this requirement cannot yet be expressed as
-  `:skein/min`. An older Skein can accept the source-mode declaration while
-  publishing no kanban contribution, so verify the resolved entry points in
-  `runtime/status` and confirm the `kanban` operation after activation.
+- A Skein checkout/runtime at commit `24f900464d9b26e8e3d81550eef3a06230de5395` or a descendant. That commit contains both the contribution and lifecycle authoring forms Kanban uses; the v16 migration was validated against Skein main `80e11a5b54808cf33c7fee2c1b09b232c060e001`. No Skein release marker contains that floor yet, so this requirement cannot yet be expressed as `:skein/min`.
 - A live weaver configured from a workspace you control.
 - A 40-hex git SHA pin for this repository, or a local checkout approved through
   `spools.local.edn` for development.
@@ -81,11 +75,7 @@ encoded in a manifest.
 
 ## Activation
 
-The consumer owns the runtime and declares kanban explicitly from trusted
-`init.clj` or REPL code. The declaration names a source target and world policy
-only: kanban's entry points come from the `spool` var in
-[`src/ct/spools/kanban.clj`](./src/ct/spools/kanban.clj), so a consumer never
-mirrors them. Kanban has no prerequisite module:
+The consumer owns the runtime and declares kanban explicitly from trusted `init.clj` or REPL code. The declaration names a source target and world policy only. Static authoring forms in [`src/ct/spools/kanban.clj`](./src/ct/spools/kanban.clj) publish the complete operation, pattern, and query partitions; a named lifecycle resource owns vocabulary and runtime-state setup. Kanban has no prerequisite module:
 
 ```clojure
 (require '[skein.api.current.alpha :as current]
@@ -100,11 +90,7 @@ mirrors them. Kanban has no prerequisite module:
    :required? true})
 ```
 
-Applied reconciliation registers the `kanban` and `kanban-export` ops, the `kanban-batch` weave pattern, the
-`kanban-cards`/`kanban-pending` queries, and declares the `kanban/*`
-attribute namespace. It never binds a tracker. Replacing the module atomically replaces both
-ops, the batch pattern, and both board queries; removing it removes those
-declarations without clearing stored cards or the tracker binding.
+Source activation collects the `kanban` and `kanban-export` ops, the `kanban-batch` weave pattern, and the `kanban-cards`, `kanban-pending`, and `kanban-epic-pending` queries. The lifecycle resource declares the `kanban/*` and open `kanban.label/*` attribute namespaces and materializes runtime state; it never binds a tracker. Its `:open` and `:close` symbols are implementation callables required by the lifecycle form, not public consumer APIs or new spec surfaces. Image activation replays the same normalized declaration record. Removing the module retracts both ops, the pattern, and all three queries without clearing stored cards or the process-lifetime tracker binding.
 
 Runtime-dependent Clojure functions take the target runtime first. For example, use `(kanban/add! runtime title flags)`, `(kanban/board runtime)`, and `(kanban/set-tracker! runtime binding)`. The registered CLI operations select the invoking weaver and pass its runtime into the same functions.
 
@@ -139,9 +125,7 @@ ancestry floor named above:
   :kanban/tracker
   {:file "kanban_tracker.clj"
    :spools ['codethread/kanban 'codethread/devflow]
-   :after [:kanban :devflow]
-   :contribute 'kanban-tracker/contribute
-   :reconcile 'kanban-tracker/reconcile})
+   :after [:kanban :devflow]})
 ```
 
 A repo with a different tracker writes its own module against the same contract;
