@@ -821,21 +821,21 @@
 (defn- card-relations
   "Return depends-on relations touching card-id, sorted by other-endpoint id.
 
-  Roots the subgraph at every strand id because depends-on expansion only
-  walks outgoing edges: rooting at the card (or even all cards) never yields
-  edges whose dependent is an unrelated strand, so incoming edges from
-  non-card work would be dropped. The full root set keeps every edge incident
-  to the card visible, both directions, any strand, any state."
+  Direct incoming and outgoing adjacency reads cover both directions without
+  hydrating or traversing unrelated strands. The endpoint fetch then hydrates
+  only the strands this card will project."
   [rt card-id]
-  (let [all-ids (mapv :id (weaver/list rt))
-        {:keys [strands edges]} (graph/subgraph rt all-ids {:type "depends-on"})
-        by-id (into {} (map (juxt :id identity)) strands)]
-    (->> edges
-         (keep (fn [{:keys [from_strand_id to_strand_id]}]
-                 (cond
-                   (= card-id from_strand_id) [to_strand_id "depends-on"]
-                   (= card-id to_strand_id) [from_strand_id "depended-on-by"]
-                   :else nil)))
+  (let [outgoing (graph/outgoing-edges rt [card-id] "depends-on")
+        incoming (graph/incoming-edges rt [card-id] "depends-on")
+        relations (vec (concat (map (fn [{:keys [to_strand_id]}]
+                                      [to_strand_id "depends-on"])
+                                    outgoing)
+                               (map (fn [{:keys [from_strand_id]}]
+                                      [from_strand_id "depended-on-by"])
+                                    incoming)))
+        by-id (into {} (map (juxt :id identity))
+                    (graph/strands-by-ids rt (mapv first relations)))]
+    (->> relations
          (sort-by first)
          (mapv (fn [[other relation]]
                  {:relation relation :strand (summarize-strand (by-id other))})))))
@@ -1040,6 +1040,26 @@
           :ready (mapv #(select-keys % tracker-step-keys) (:ready projection))})
        {:name nil :run-id run :status nil :ready []}))))
 
+(defn- ready-work
+  "Return active card work whose direct dependencies are not active.
+
+  Computes the same readiness rule as the core read, scoped to the card's
+  already-loaded work rather than hydrating the global ready frontier."
+  [rt active-work]
+  (let [dependency-edges (graph/outgoing-edges rt (mapv :id active-work) "depends-on")
+        dependency-states (into {}
+                                (map (juxt :id :state))
+                                (graph/strands-by-ids rt
+                                                      (mapv :to_strand_id dependency-edges)))
+        blocked-work-ids (into #{}
+                               (keep (fn [{:keys [from_strand_id to_strand_id]}]
+                                       (when (= "active" (dependency-states to_strand_id))
+                                         from_strand_id)))
+                               dependency-edges)]
+    (->> active-work
+         (remove #(contains? blocked-work-ids (:id %)))
+         (mapv summarize-strand))))
+
 (defn card-view
   "Return one card joined to its notes, tasks, work, and frontier.
 
@@ -1052,15 +1072,14 @@
   (let [card (card-strand runtime (require-non-blank! :id id))
         {:keys [notes work]} (card-subtree runtime card)
         active-work (filterv #(= "active" (:state %)) work)
-        work-ids (set (map :id active-work))
-        ready (filterv #(contains? work-ids (:id %)) (weaver/ready runtime))
+        ready (ready-work runtime active-work)
         tracker (tracker-join runtime card)]
     (cond-> {:operation "kanban card"
              :card (select-keys card [:id :title :state :attributes :created_at :updated_at])
              :tasks (tasks-with-status runtime (feature-tasks runtime (:id card)))
              :notes (mapv compact-note notes)
              :active-work (mapv summarize-strand active-work)
-             :ready (mapv summarize-strand ready)
+             :ready ready
              :related (card-relations runtime (:id card))}
       tracker (assoc :tracker tracker))))
 

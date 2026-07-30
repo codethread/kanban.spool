@@ -842,6 +842,31 @@
           (let [c-id (get-in (op! rt "add" "Card C") [:card :id])]
             (is (= [] (:related (op! rt "card" c-id))))))))))
 
+(deftest kanban-card-view-avoids-global-strand-reads
+  (with-kanban
+    (fn [rt]
+      (let [card-id (get-in (op! rt "add" "Bounded card") [:card :id])
+            dependency-id (get-in (op! rt "add" "Dependency") [:card :id])
+            dependent-id (get-in (op! rt "add" "Dependent") [:card :id])
+            ready-work (weaver/add! rt {:title "Ready work"})
+            blocked-work (weaver/add! rt {:title "Blocked work"})]
+        (weaver/update! rt card-id {:edges [{:type "depends-on" :to dependency-id}
+                                            {:type "parent-of" :to (:id ready-work)}
+                                            {:type "parent-of" :to (:id blocked-work)}]})
+        (weaver/update! rt dependent-id {:edges [{:type "depends-on" :to card-id}]})
+        (weaver/update! rt (:id blocked-work)
+                        {:edges [{:type "depends-on" :to dependency-id}]})
+        (with-redefs [weaver/list (fn [& _]
+                                    (throw (ex-info "card view read every strand" {})))
+                      weaver/ready (fn [& _]
+                                     (throw (ex-info "card view read global readiness" {})))]
+          (let [view (op! rt "card" card-id)]
+            (is (= #{["depends-on" dependency-id]
+                     ["depended-on-by" dependent-id]}
+                   (set (map (fn [{:keys [relation strand]}] [relation (:id strand)])
+                             (:related view)))))
+            (is (= [(:id ready-work)] (mapv :id (:ready view))))))))))
+
 (deftest kanban-board-str-renders-ascii-lanes
   (with-kanban
     (fn [rt]
