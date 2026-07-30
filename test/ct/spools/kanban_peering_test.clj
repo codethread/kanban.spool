@@ -45,16 +45,14 @@
      (f (:runtime ctx)))))
 
 (defn- activate-guild!
-  "Activate the guild spool module on `rt` from the loaded JVM image.
+  "Activate the Guild spool module from source in the fresh test world.
 
-  The ns require of `skein.spools.guild` guarantees the namespace is
-  image-loaded, so `:load :image` skips the source sync a bare test world
-  cannot perform. The entry points come from the guild namespace's own `spool`
-  var. Throws with the refresh result unless the module applied."
+  Guild uses authoring forms, so source activation collects the declaration
+  record before later modules use its runtime-owned dispatch API. Throws with
+  the refresh result unless the module applied."
   [rt]
   (let [result (runtime/module! rt :guild
-                                {:ns 'skein.spools.guild
-                                 :load :image})
+                                {:ns 'skein.spools.guild})
         status (get-in result [:modules :guild :status])]
     (when-not (contains? #{:applied :unchanged} status)
       (throw (ex-info "guild module activation failed"
@@ -201,7 +199,7 @@
         guild-and-kanban
         (str preamble
              "(runtime/module! runtime :guild\n"
-             "  {:ns 'skein.spools.guild :load :image})\n"
+             "  {:ns 'skein.spools.guild})\n"
              "(runtime/module! runtime :kanban\n"
              "  {:ns 'ct.spools.kanban :after [:guild]})\n")
         with-peering-init
