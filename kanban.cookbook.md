@@ -379,7 +379,7 @@ Honest source: `needs-review-entries` / `board` in the spool source, the `:stayi
 
 **Situation.** Two repos live side by side on one machine — say `backend` and `frontend` — each with its own weaver and board. A card in `backend` is really work for `frontend`, and you want to hand it over without copy-pasting its title, body, and priority by hand.
 
-**Composition.** Turn on peering in both repos (guild + kanban + `install-peering!`), name each weaver, then `kanban-peers` to find the target and `kanban-send` to hand the card over. The board tier travels; tasks, notes, and claims stay home.
+**Composition.** Turn on peering in both repos (Guild + Kanban + the peering module), name each weaver, then `kanban-peers` to find the target and `kanban-send` to hand the card over. The board tier travels; tasks, notes, and claims stay home.
 
 ```clojure
 ;; In BOTH repos: .skein/spools.edn approves guild alongside kanban.
@@ -432,14 +432,14 @@ strand kanban-send frontend "$card"
 - **Guild is approved like any other spool.** Peering's receive op is a guild op,
   so the consuming workspace approves `skein.spools/guild` in `spools.edn` and
   syncs it exactly as it approves kanban — there is no separate install path and
-  no classpath magic. Approving both is what lets `install-peering!` find the
-  `guild` op at activation (contract [Peering](./kanban.md#peering);
-  `install-peering-requires-guild-first` in `kanban_peering_test.clj`).
-- **Activation order is a hard prerequisite.** `install-peering!` fails loudly if
-  guild or the kanban board op is not already registered, so the `:after [:guild
-  :kanban]` guard is correctness, not taste — a reordered init.clj surfaces the
-  problem at startup instead of at the first send
-  (`install-peering-requires-guild-first`/`-kanban-first`).
+  no classpath magic. Approving both lets the peering lifecycle register its
+  receiver through Guild at activation (contract [Peering](./kanban.md#peering);
+  `peering-lifecycle-requires-guild-first` in `kanban_peering_test.clj`).
+- **Activation order is a hard prerequisite.** The peering lifecycle fails loudly
+  if Guild or the Kanban board op is not already registered, so the `:after
+  [:guild :kanban]` guard is correctness, not taste — a reordered init.clj
+  surfaces the problem at startup instead of at the first send
+  (`peering-lifecycle-requires-guild-first`/`-kanban-first`).
 - **The name is the provenance, so it is mandatory.** Every sent card is stamped
   `kanban/from` `"<board>:<card>"`, which needs the sending weaver's published
   name. A nameless weaver refuses to send rather than stamp a blank origin — set
@@ -458,7 +458,7 @@ strand kanban-send frontend "$card"
   (contract [Peering](./kanban.md#peering); the receive tests in
   `kanban_peering_test.clj`).
 
-Honest source: the send/receive ops and `install-peering!` in [`src/ct/spools/kanban/peering.clj`](./src/ct/spools/kanban/peering.clj), the contract [Peering](./kanban.md#peering) section, and the peering test suite that drives both sides against a real weaver runtime.
+Honest source: the send/receive ops and `kanban-peering-receiver` lifecycle resource in [`src/ct/spools/kanban/peering.clj`](./src/ct/spools/kanban/peering.clj), the contract [Peering](./kanban.md#peering) section, and the peering test suite that drives both sides against a real weaver runtime.
 
 ---
 
