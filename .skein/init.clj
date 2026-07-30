@@ -3,11 +3,10 @@
 
 (def runtime (current/runtime))
 
-;; Requires Skein commit 343f886880092bc38ed3e0522eca2d95a7cf04bc or a
-;; descendant. Each declaration names a source target and world policy only:
-;; namespace targets resolve entry points from that namespace's `spool` var,
-;; while the file target resolves them from the single namespace its file
-;; declares.
+;; Requires Skein commit 24f900464d9b26e8e3d81550eef3a06230de5395 or a
+;; descendant. Each declaration names a source target and world policy only;
+;; static contribution and lifecycle forms in the target namespace provide its
+;; complete owner partition.
 
 ;; Batteries is approved as a shipped source-root spool; the :spools guard
 ;; keeps source loading behind that visible spools.edn approval.
@@ -16,7 +15,8 @@
    :spools ['skein.spools/batteries]})
 
 ;; Board peering (kanban.md "Peering"): guild first, kanban second, peering
-;; last — install-peering! fails loudly unless both predecessors reconciled.
+;; last — its lifecycle resource fails loudly unless both predecessors are
+;; active.
 (runtime/module! runtime :guild
   {:ns 'skein.spools.guild
    :spools ['skein.spools/guild]
@@ -29,7 +29,7 @@
    :required? true})
 
 (runtime/module! runtime :kanban/peering
-  {:file "peering_adapter.clj"
+  {:ns 'ct.spools.kanban.peering
    :spools ['codethread/kanban 'skein.spools/guild]
    :after [:guild :kanban]
    :required? true})
