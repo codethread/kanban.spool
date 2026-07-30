@@ -198,7 +198,7 @@ It returns the root, every strand beneath it via `parent-of` (all lifecycle stat
 
 ## Peering
 
-Board peering lets sibling weavers on one machine hand cards to each other's boards. It is **opt-in and off by default**: base module activation never touches it. A repo turns it on by activating `ct.spools.kanban.peering` after Guild and Kanban. Static forms publish the local `kanban-peers` and `kanban-send` ops, and the module's lifecycle resource registers the `kanban.send.v1` Guild receiver.
+Board peering lets sibling weavers on one machine hand cards to each other's boards. It is **opt-in and off by default**: base module activation never touches it. A repo turns it on by activating `ct.spools.kanban.peering` after Guild and Kanban. Static forms publish the local `kanban-peers` and `kanban-send` ops, and the module's lifecycle resource registers the `kanban.send.v1` receiver through Guild's supported seam.
 
 ### What travels, and what never does
 
@@ -230,12 +230,7 @@ Peering stamps every card it sends with the local weaver's **published name**, s
 {"configFormat": "alpha", "name": "backend"}
 ```
 
-Then declare the modules in order: guild first, kanban second, peering last.
-These forms-only declarations require Skein commit
-`24f900464d9b26e8e3d81550eef3a06230de5395` or a descendant; no Skein release
-marker contains that floor yet. The peering lifecycle fails loudly if Guild or
-the Kanban board op is not already registered, so the `:after` ordering is a
-hard prerequisite, not a preference:
+Then declare the modules in order: guild first, kanban second, peering last. These forms-only declarations require Skein commit `24f900464d9b26e8e3d81550eef3a06230de5395` or a descendant; no Skein release marker contains that floor yet. The peering lifecycle fails loudly if Guild or the Kanban board op is not already registered, so the `:after` ordering is a hard prerequisite, not a preference:
 
 ```clojure
 (runtime/module! runtime
@@ -258,14 +253,9 @@ hard prerequisite, not a preference:
    :required? true})
 ```
 
-Each declaration names a source target and world policy only. Source activation
-collects the namespace's static forms; image activation replays the retained
-normalized declaration record.
+Each declaration names a source target and world policy only. Source activation collects the namespace's static forms; image activation replays the retained normalized declaration record.
 
-The peering owner replaces `kanban-peers` and `kanban-send` as one complete
-partition. Guild continues to own the `kanban.send.v1` dispatch facade and
-process-lifetime receiver table; omitting peering retracts the two local ops and
-closes its resource without claiming a second Guild-table owner.
+The peering owner replaces `kanban-peers` and `kanban-send` as one complete partition. Guild continues to own the `kanban.send.v1` dispatch facade and process-lifetime receiver table; omitting peering retracts the two local ops and closes its resource without claiming a second Guild-table owner or removing the receiver.
 
 ### Discovering and sending
 
