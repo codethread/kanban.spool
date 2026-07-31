@@ -24,7 +24,7 @@ The `kanban-dash` bin provides an interactive terminal board with epic and featu
 
 ## Prerequisites
 
-- A Skein checkout/runtime at commit `60e80c5d12bc382fd142865bf38f9b61b8455b98` or a descendant. That commit adds the `defbin` form and `mill bin` commands used by `kanban-dash`. No Skein release marker contains that floor yet, so this requirement cannot yet be expressed as `:skein/min`.
+- A Skein checkout/runtime at commit `60e80c5d0d3c3b80f8e60ec9a510fc660669b07d` or a descendant. That commit adds the `defbin` form and `mill bin` commands used by `kanban-dash`. No Skein release marker contains that floor yet, so this requirement cannot yet be expressed as `:skein/min`.
 - A live weaver configured from a workspace you control.
 - A 40-hex git SHA pin for this repository, or a local checkout approved through
   `spools.local.edn` for development.
