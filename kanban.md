@@ -184,6 +184,17 @@ printf "(do (require '[ct.spools.kanban :as kanban] '[skein.api.current.alpha :a
 
 `print-board!` prints a stacked-lane ASCII board (epics, refinement, pending, claimed and in_review with owner/branch and doing-task, needs-review); `board-str` is the pure renderer over the `board` result for reuse.
 
+## Interactive dashboard
+
+The spool publishes `kanban-dash`, an interactive terminal board. Build its Bun dependencies after installing or upgrading the spool, then run it against the workspace selected by `mill`:
+
+```sh
+mill bin build kanban-dash
+mill bin run kanban-dash
+```
+
+The dashboard retains the board's epic and feature views, keyboard navigation, label filters, and saved views. Saved filters are keyed by workspace, so one repository's views do not leak into another. The runner selects the workspace; `--interval <seconds>` changes the two-second poll interval, `--all` starts with closed cards visible, and `--once` prints one snapshot without entering the interactive view. Press `?` in the dashboard for the current key map.
+
 ## Offline export
 
 Module activation also registers `kanban-export`, a read-only op that bundles one card's full `parent-of` subtree plus its internal `depends-on` edges in a single call:

@@ -21,6 +21,13 @@
   (is (fn? (public-value 'kanban-op)))
   (is (fn? (public-value 'kanban-export-op)))
   (is (fn? (public-value 'kanban-batch)))
+  (is (= {:name "kanban-dash"
+          :doc "Open the interactive Kanban board in the caller's terminal."
+          :executable [:family "bin/kanban-dash"]
+          :build ["bun" "install" "--cwd" "scripts/agent-dash" "--frozen-lockfile"]
+          :provenance 'ct.spools.kanban}
+         (select-keys (public-value 'kanban-dash)
+                      [:name :doc :executable :build :provenance])))
   (is (= {:kind :resource
           :open 'ct.spools.kanban/open-kanban!
           :close 'ct.spools.kanban/close-kanban!

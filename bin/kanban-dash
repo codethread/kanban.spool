@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+workspace=${SKEIN_WORKSPACE:?mill bin run did not provide SKEIN_WORKSPACE}
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+family_dir=$(dirname "$script_dir")
+package_dir="$family_dir/scripts/agent-dash"
+
+if [ ! -d "$package_dir/node_modules" ]; then
+  printf '%s\n' 'kanban-dash dependencies are not built; run: mill bin build kanban-dash' >&2
+  exit 2
+fi
+
+exec bun "$package_dir/index.tsx" --workspace "$workspace" "$@"
