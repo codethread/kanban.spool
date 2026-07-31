@@ -117,7 +117,7 @@ Claim a pending feature card, stamping the work-root attributes.
 Function.
 
 Close Kanban's module resource without retracting process-lifetime state.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1794-L1797">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1800-L1803">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/finish!">`finish!`</a>
 ``` clojure
@@ -216,7 +216,7 @@ Append a note to a card or task via the blessed notes relation.
 Function.
 
 Declare Kanban vocabulary and materialize its process-lifetime runtime state.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1786-L1792">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1792-L1798">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/prime">`prime`</a>
 ``` clojure

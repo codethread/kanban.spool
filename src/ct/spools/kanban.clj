@@ -1760,6 +1760,12 @@
   (export-card-op ctx))
 
 #_{:clj-kondo/ignore [:unresolved-symbol]}
+(skein/defbin kanban-dash
+  "Open the interactive Kanban board in the caller's terminal."
+  {:executable [:family "bin/kanban-dash"]
+   :build ["bun" "install" "--cwd" "scripts/agent-dash" "--frozen-lockfile"]})
+
+#_{:clj-kondo/ignore [:unresolved-symbol]}
 (skein/defquery kanban-cards-query
   "Select every Kanban card strand."
   {}

@@ -16,13 +16,15 @@ recipes live in [kanban.cookbook.md](./kanban.cookbook.md). At runtime,
 `strand kanban about` the terse command manual — both authored in the spool, so
 they cannot drift from the installed surface.
 
-`kanban-export` plus the bun renderer in [scripts/kanban-export](./scripts/kanban-export)
+`kanban-export` plus the Bun renderer in [scripts/kanban-export](./scripts/kanban-export)
 render a card's subtree to a standalone HTML file offline (see kanban.md's
 [Offline export](./kanban.md#offline-export) section).
 
+The `kanban-dash` bin provides an interactive terminal board with epic and feature views, label filters, saved per-workspace views, and keyboard-driven navigation.
+
 ## Prerequisites
 
-- A Skein checkout/runtime at commit `24f900464d9b26e8e3d81550eef3a06230de5395` or a descendant. That commit contains both the contribution and lifecycle authoring forms Kanban uses; the v16 migration was validated against Skein main `80e11a5b54808cf33c7fee2c1b09b232c060e001`. No Skein release marker contains that floor yet, so this requirement cannot yet be expressed as `:skein/min`.
+- A Skein checkout/runtime at commit `60e80c5d12bc382fd142865bf38f9b61b8455b98` or a descendant. That commit adds the `defbin` form and `mill bin` commands used by `kanban-dash`. No Skein release marker contains that floor yet, so this requirement cannot yet be expressed as `:skein/min`.
 - A live weaver configured from a workspace you control.
 - A 40-hex git SHA pin for this repository, or a local checkout approved through
   `spools.local.edn` for development.
@@ -90,7 +92,7 @@ The consumer owns the runtime and declares kanban explicitly from trusted `init.
    :required? true})
 ```
 
-Source activation collects the `kanban` and `kanban-export` ops, the `kanban-batch` weave pattern, and the `kanban-cards`, `kanban-pending`, and `kanban-epic-pending` queries. The lifecycle resource declares the `kanban/*` and open `kanban.label/*` attribute namespaces and materializes runtime state; it never binds a tracker. Its `:open` and `:close` symbols are implementation callables required by the lifecycle form, not public consumer APIs or new spec surfaces. Image activation replays the same normalized declaration record. Removing the module retracts both ops, the pattern, and all three queries without clearing stored cards or the process-lifetime tracker binding.
+Source activation collects the `kanban` and `kanban-export` ops, the `kanban-dash` bin, the `kanban-batch` weave pattern, and the `kanban-cards`, `kanban-pending`, and `kanban-epic-pending` queries. The lifecycle resource declares the `kanban/*` and open `kanban.label/*` attribute namespaces and materializes runtime state; it never binds a tracker. Its `:open` and `:close` symbols are implementation callables required by the lifecycle form, not public consumer APIs or new spec surfaces. Image activation replays the same normalized declaration record. Removing the module retracts both ops, the bin, the pattern, and all three queries without clearing stored cards or the process-lifetime tracker binding.
 
 Runtime-dependent Clojure functions take the target runtime first. For example, use `(kanban/add! runtime title flags)`, `(kanban/board runtime)`, and `(kanban/set-tracker! runtime binding)`. The registered CLI operations select the invoking weaver and pass its runtime into the same functions.
 

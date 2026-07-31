@@ -1,4 +1,9 @@
-.PHONY: kanban-export kanban-serve
+.PHONY: kanban-export kanban-serve kanban-dash-check
+
+kanban-dash-check:
+	bun install --cwd scripts/agent-dash --frozen-lockfile --silent
+	bun run --cwd scripts/agent-dash test
+	bun run --cwd scripts/agent-dash typecheck
 
 # Standalone HTML export of a feature/epic card subtree; polls the strand CLI.
 # Pass the card id as ID and any extra flags (--out, --workspace, --open) as ARGS,
