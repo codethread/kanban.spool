@@ -257,7 +257,7 @@ Honest source: the polymorphic `finish!`, `complete-epic!`/`abandon-epic!`/`reop
 
 ## Recipe: Hang execution strands under a card
 
-**Situation.** The user's request is approved and it's real work — a task DAG of execution strands. You don't want two competing trackers fighting over the same feature.
+**Situation.** The user's request is approved and it's real work — a task DAG of execution strands. You want one clear work root for the feature.
 
 **Composition.** Claim the card, build the execution strands as usual, then connect their root to the card with a `parent-of` edge. The card becomes the audit root; the execution strands are the work beneath it.
 

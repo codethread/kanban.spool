@@ -27,12 +27,12 @@ User-facing kanban board over Skein strands.
 
 ## <a name="ct.spools.kanban/about">`about`</a>
 ``` clojure
-(about runtime)
+(about _runtime)
 ```
 Function.
 
 Return the kanban convention and installed helper surface.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1356-L1426">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1184-L1249">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/add!">`add!`</a>
 ``` clojure
@@ -69,7 +69,7 @@ Return the grouped board snapshot: epics, feature lanes, closed count.
 
   `all?` adds `:cards`, a compact all-state card collection with direct epic
   membership. The ordinary grouped active snapshot remains unchanged.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1212-L1275">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1040-L1103">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/board-str">`board-str`</a>
 ``` clojure
@@ -78,7 +78,7 @@ Return the grouped board snapshot: epics, feature lanes, closed count.
 Function.
 
 Render a `board` result map as a stacked-lane ASCII board string.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1330-L1349">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1158-L1177">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/card-view">`card-view`</a>
 ``` clojure
@@ -90,10 +90,8 @@ Return one card joined to its notes, tasks, work, and frontier.
 
   This is the resume entry point: everything an agent needs to continue a
   card lives here. `:tasks` projects the feature card's child tasks with the
-  four derived statuses (empty for cards that carry no task tier), and
-  `:tracker` joins the bound tracker's run status and ready steps for cards
-  stamped with `kanban/run-id` (see `tracker-join`).
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1066-L1087">Source</a></sub></p>
+  four derived statuses (empty for cards that carry no task tier).
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L898-L915">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/claim!">`claim!`</a>
 ``` clojure
@@ -105,9 +103,9 @@ Claim a pending feature card, stamping the work-root attributes.
 
   `--owner` and `--branch` are mandatory so every claimed card answers who is
   driving it and on which branch; `--worktree` is optional (direct work in the
-  main checkout has no separate worktree). `--run-id` optionally names the card's
-  tracker run so `kanban card` can join the bound tracker's status and ready
-  steps. Epics group work and are never claimed themselves.
+  main checkout has no separate worktree). `--run-id` optionally stamps an
+  opaque run pointer for agents to query through their workflow directly. Epics
+  group work and are never claimed themselves.
 <p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L390-L413">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/close-kanban!">`close-kanban!`</a>
@@ -117,7 +115,7 @@ Claim a pending feature card, stamping the work-root attributes.
 Function.
 
 Close Kanban's module resource without retracting process-lifetime state.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1800-L1803">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1623-L1626">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/finish!">`finish!`</a>
 ``` clojure
@@ -160,7 +158,7 @@ Return every label in use on active cards with the count of cards carrying it.
   Labels have no registry of their own, so the board's own cards are the
   vocabulary: this is how an agent discovers which labels exist before reusing
   one instead of coining a near-duplicate.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1112-L1125">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L940-L953">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/label-rm!">`label-rm!`</a>
 ``` clojure
@@ -189,7 +187,7 @@ Return the highest-priority (p1 first) oldest active pending feature card, or ni
   overall. `epic-id` narrows to one epic's direct features — the pick-up read
   for a loop working a single epic — and fails loudly when the id does not
   name an epic card.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1150-L1171">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L978-L999">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/note!">`note!`</a>
 ``` clojure
@@ -216,7 +214,7 @@ Append a note to a card or task via the blessed notes relation.
 Function.
 
 Declare Kanban vocabulary and materialize its process-lifetime runtime state.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1792-L1798">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1615-L1621">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/prime">`prime`</a>
 ``` clojure
@@ -232,7 +230,7 @@ Return the full agent-priming payload for working the kanban board.
   attribute, command, and pattern surface and adds the working agreement,
   pick-up flow, note discipline, adjacent-work awareness, and branch
   visibility that an agent needs before touching the board.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1428-L1508">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1251-L1331">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/print-board!">`print-board!`</a>
 ``` clojure
@@ -241,7 +239,7 @@ Return the full agent-priming payload for working the kanban board.
 Function.
 
 Print the live board as ASCII; the human view for `mill weaver repl`.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1351-L1354">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L1179-L1182">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/promote!">`promote!`</a>
 ``` clojure
@@ -296,25 +294,6 @@ Function.
 
 Set an active card's priority (p1 highest urgency .. p4 someday).
 <p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L343-L353">Source</a></sub></p>
-
-## <a name="ct.spools.kanban/set-tracker!">`set-tracker!`</a>
-``` clojure
-(set-tracker! runtime tracker)
-```
-Function.
-
-Bind the run-tracker strategy for this weaver lifetime.
-
-  The binding is `{:name <non-blank-string> :project <fq-symbol-or-fn>}`. `:name`
-  surfaces in `about` and the card view so a cold agent knows which convention
-  the projected steps follow; `:project` is `(fn [run-id] -> {:status <string|nil>
-  :ready [step ...]})`, called as `(project runtime run-id)` and resolved with
-  `requiring-resolve` at call time when a
-  symbol so a config reload rebinds cleanly. Rebinding replaces the prior value;
-  pass a valid binding after every weaver startup or config reload. Module
-  activation never binds a default. The binding is validated against
-  `::tracker-binding`.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban.clj#L949-L963">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban/task-add!">`task-add!`</a>
 ``` clojure
