@@ -1589,13 +1589,13 @@
    :build ["go" "build" "-C" "scripts/agent-dash" "-o" "kanban-dash" "."]})
 
 #_{:clj-kondo/ignore [:unresolved-symbol]}
-(skein/defquery kanban-cards-query
+(skein/defquery kanban-cards
   "Select every Kanban card strand."
   {}
   [:= [:attr "kanban/card"] "true"])
 
 #_{:clj-kondo/ignore [:unresolved-symbol]}
-(skein/defquery kanban-pending-query
+(skein/defquery kanban-pending
   "Select active Kanban cards in the pending lane."
   {}
   [:and [:= :state "active"]
@@ -1603,7 +1603,7 @@
    [:= [:attr "kanban/lane"] "pending"]])
 
 #_{:clj-kondo/ignore [:unresolved-symbol]}
-(skein/defquery kanban-epic-pending-query
+(skein/defquery kanban-epic-pending
   "Select active pending cards hanging directly under one epic."
   {:usage "strand ready --query kanban-epic-pending --param epic=<id>"}
   {:params [:epic]
