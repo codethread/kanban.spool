@@ -366,7 +366,7 @@ func rowTitle(r FlatRow) string {
 	return indent + "  " + ui.OneLine(r.Task.Title)
 }
 
-const hint = "↑↓/jk move · ⌃d/⌃u page · = expand · - collapse · ⏎ attrs · ⇥/⇧⇥ filter tab · f edit tab · ⌃g open · y copy · a all/active · r refresh · q quit"
+const listHint = "↑↓/jk move · ⌃d/⌃u page · = expand · - collapse · ⏎ attrs · / search · ⇥/⇧⇥ filter tab · f edit tab · ⌃g open · y copy · a all/active · r refresh · q quit"
 
 // ── the view module ──────────────────────────────────────────────────────────
 
@@ -399,6 +399,10 @@ type Kanban struct {
 	expanded    map[string]bool
 	filter      FilterState
 	filterError string
+	// searches is transient state, indexed like the tab strip: ALL is zero and
+	// saved views follow. It deliberately stays out of filters.json.
+	searches    []string
+	searchInput bool
 	overlay     *overlay
 	s           app.ListState
 
@@ -423,6 +427,7 @@ func New() *Kanban {
 		expanded:     map[string]bool{},
 		filter:       state,
 		filterError:  err,
+		searches:     make([]string, len(state.Views)+1),
 		detail:       vp,
 		cols:         120,
 		termRows:     40,
@@ -460,6 +465,53 @@ func (k *Kanban) treeOf(rows []KanbanRow) []FlatRow {
 
 func (k *Kanban) tree() []FlatRow { return k.treeOf(k.rows) }
 
+func searchRows(rows []FlatRow, query string) []FlatRow {
+	if query == "" {
+		return rows
+	}
+	out := make([]FlatRow, 0, len(rows))
+	for _, row := range rows {
+		if strings.Contains(rowID(row), query) || strings.Contains(rowTitle(row), query) {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+func (k *Kanban) searchPos() int { return PosOf(k.filter.Active) }
+
+func (k *Kanban) ensureSearches() {
+	want := len(k.filter.Views) + 1
+	if len(k.searches) < want {
+		k.searches = append(k.searches, make([]string, want-len(k.searches))...)
+	} else if len(k.searches) > want {
+		k.searches = k.searches[:want]
+	}
+}
+
+func (k *Kanban) searchQuery() string {
+	k.ensureSearches()
+	return k.searches[k.searchPos()]
+}
+
+// visibleRows applies search after the current tab's label filter and tree
+// expansion state. It never alters saved filter preferences or fetched data.
+func (k *Kanban) visibleRows() []FlatRow { return searchRows(k.tree(), k.searchQuery()) }
+func (k *Kanban) visibleRowsOf(rows []KanbanRow) []FlatRow {
+	return searchRows(k.treeOf(rows), k.searchQuery())
+}
+
+func (k *Kanban) listHint() string {
+	query := k.searchQuery()
+	if query == "" && !k.searchInput {
+		return listHint
+	}
+	if k.searchInput {
+		return "SEARCH /" + query + " · type to filter · ⏎ keep · ⎋ clear"
+	}
+	return "SEARCH /" + query + " · / edit · ⎋ clear · ↑↓/jk move · ⏎ attrs"
+}
+
 // stripRows is the total rows the status strips above the board consume. Every
 // banner that can draw is counted here once, so the list windows against the
 // height it actually gets and the stacked heights still sum to the pinned frame.
@@ -485,7 +537,7 @@ func (k *Kanban) FetchKey() string {
 	slices.Sort(expanded)
 	detail := ""
 	if k.s.Mode == app.ModeDetail {
-		if c := cardAt(k.tree(), k.s.Selected); c != nil {
+		if c := cardAt(k.visibleRows(), k.s.Selected); c != nil {
 			detail = c.ID
 		}
 	}
@@ -512,13 +564,13 @@ func (k *Kanban) InDetail() bool { return k.s.Mode == app.ModeDetail || k.overla
 
 // The overlay owns every key while it is open, including the shell's q — a filter
 // name with a "q" in it must not quit the dashboard.
-func (k *Kanban) CapturesInput() bool { return k.overlay != nil }
+func (k *Kanban) CapturesInput() bool { return k.overlay != nil || k.searchInput }
 
 func (k *Kanban) EditTarget() (data.DetailRow, bool) {
 	if k.overlay != nil {
 		return data.DetailRow{}, false
 	}
-	if c := cardAt(k.tree(), k.s.Selected); c != nil {
+	if c := cardAt(k.visibleRows(), k.s.Selected); c != nil {
 		return c.DetailRow, true
 	}
 	return data.DetailRow{}, false
@@ -530,7 +582,7 @@ func (k *Kanban) CopyID() string {
 	if k.overlay != nil {
 		return ""
 	}
-	rows := k.tree()
+	rows := k.visibleRows()
 	if k.s.Selected < 0 || k.s.Selected >= len(rows) {
 		return ""
 	}
@@ -556,7 +608,7 @@ func (k *Kanban) Refresh(all bool) tea.Cmd {
 		detailIDs = append(detailIDs, id)
 	}
 	if k.s.Mode == app.ModeDetail {
-		if c := cardAt(k.tree(), k.s.Selected); c != nil && !k.expanded[c.ID] {
+		if c := cardAt(k.visibleRows(), k.s.Selected); c != nil && !k.expanded[c.ID] {
 			detailIDs = append(detailIDs, c.ID)
 		}
 	}
@@ -648,7 +700,7 @@ func (k *Kanban) Apply(msg tea.Msg) bool {
 				delete(k.expanded, id)
 			}
 		}
-		k.s = app.FollowSelection(k.s, k.treeOf(msg.rows), rowKey)
+		k.s = app.FollowSelection(k.s, k.visibleRowsOf(msg.rows), rowKey)
 		k.syncDetail()
 		return true
 	}
@@ -663,6 +715,9 @@ func (k *Kanban) OnKey(msg tea.KeyMsg, ctx app.KeyCtx) tea.Cmd {
 	// does not use, so a stray press can never leak through to the board beneath.
 	if k.overlay != nil {
 		return k.overlayKey(msg, key)
+	}
+	if k.searchInput {
+		return k.searchKey(key)
 	}
 	if k.s.Mode == app.ModeDetail {
 		return k.detailKey(msg, key, ctx)
@@ -742,6 +797,10 @@ func (k *Kanban) overlayKey(msg tea.KeyMsg, key string) tea.Cmd {
 		// working copy left to commit once the view it edits is gone. The `+` tab has
 		// no saved view behind it, so there is nothing there to delete.
 		if o.slot != nil {
+			// Drop the deleted tab's transient query while preserving later tabs'
+			// queries as their strip positions shift left.
+			k.ensureSearches()
+			k.searches = slices.Delete(k.searches, *o.slot+1, *o.slot+2)
 			k.withFilter(DeleteView(k.filter.Views, *o.slot))
 		}
 		return nil
@@ -776,12 +835,43 @@ func (k *Kanban) detailKey(msg tea.KeyMsg, key string, ctx app.KeyCtx) tea.Cmd {
 	return cmd
 }
 
+func (k *Kanban) searchKey(key string) tea.Cmd {
+	query := k.searchQuery()
+	switch key {
+	case "enter":
+		k.searchInput = false
+	case "esc":
+		k.searches[k.searchPos()] = ""
+		k.searchInput = false
+	case "backspace":
+		runes := []rune(query)
+		k.searches[k.searchPos()] = string(runes[:max(0, len(runes)-1)])
+	default:
+		// Printable key strings are their literal rune. Named keys and modifier
+		// chords are not part of a substring query.
+		if len([]rune(key)) == 1 {
+			k.searches[k.searchPos()] += key
+		}
+	}
+	k.s = app.FollowSelection(k.s, k.visibleRows(), rowKey)
+	return nil
+}
+
 func (k *Kanban) listKey(key string, ctx app.KeyCtx) tea.Cmd {
-	rows := k.tree()
+	if key == "/" {
+		k.searchInput = true
+		return nil
+	}
+	if key == "esc" && k.searchQuery() != "" {
+		k.searches[k.searchPos()] = ""
+		k.s = app.FollowSelection(k.s, k.visibleRows(), rowKey)
+		return nil
+	}
+	rows := k.visibleRows()
 	// The banners steal list rows when they draw, so page jumps size against the
 	// same reduced viewport the list renders into, not the raw terminal.
 	listRows := ctx.TermRows - k.stripRows()
-	page := ui.ListPage(listRows, ui.HintRows(hint, ctx.Cols))
+	page := ui.ListPage(listRows, ui.HintRows(k.listHint(), ctx.Cols))
 	if moved, ok := app.ReduceListKeys(k.s, key, rows, rowKey, page); ok {
 		k.s = moved
 		return nil
@@ -859,9 +949,10 @@ func (k *Kanban) openOverlay(slot *int) {
 // shows. Closing any open overlay is part of it — every path here settles the edit.
 func (k *Kanban) withFilter(filter FilterState) {
 	k.filter = filter
+	k.ensureSearches()
 	k.filterError = SaveFilterState(FiltersFile(), data.WorkspaceRoot(), filter)
 	k.overlay = nil
-	k.s = app.FollowSelection(k.s, k.tree(), rowKey)
+	k.s = app.FollowSelection(k.s, k.visibleRows(), rowKey)
 }
 
 // commitOverlay saves the overlay's working copy as its tab and switches to it. A
@@ -871,6 +962,11 @@ func (k *Kanban) commitOverlay(o *overlay) {
 	if o.view.IsBlank() {
 		k.overlay = nil
 		return
+	}
+	if o.slot == nil {
+		// A newly saved view gets its own empty transient search slot.
+		k.ensureSearches()
+		k.searches = append(k.searches, "")
 	}
 	k.withFilter(SaveView(k.filter.Views, o.slot, o.view))
 }
@@ -939,7 +1035,7 @@ func (k *Kanban) syncDetail() {
 	if k.s.Mode != app.ModeDetail {
 		return
 	}
-	if card := cardAt(k.tree(), k.s.Selected); card != nil {
+	if card := cardAt(k.visibleRows(), k.s.Selected); card != nil {
 		k.detail.SetContent(ui.DetailBody(card.DetailRow, k.cols))
 	} else {
 		k.detail.SetContent("")
@@ -955,7 +1051,7 @@ func (k *Kanban) View(ctx app.RenderCtx) string {
 	if k.overlay != nil && ctx.Interactive {
 		return k.viewOverlay(ctx)
 	}
-	rows := k.tree()
+	rows := k.visibleRows()
 	if k.s.Mode == app.ModeDetail && ctx.Interactive {
 		return k.viewDetail(rows, ctx)
 	}
@@ -1025,14 +1121,20 @@ func (k *Kanban) viewTree(rows []FlatRow, ctx app.RenderCtx) string {
 	termRows := ctx.TermRows - k.stripRows()
 	if len(rows) == 0 {
 		text := "loading board…"
-		if k.loaded {
+		if query := k.searchQuery(); query != "" {
+			text = "no matches for /" + query
+		} else if k.loaded {
 			axis := "active "
 			if ctx.All {
 				axis = ""
 			}
 			text = "no " + axis + "cards"
 		}
-		return ui.Dim.Render(ui.Clip(text, cols))
+		out := ui.Dim.Render(ui.Clip(text, cols))
+		if ctx.Interactive {
+			out += "\n" + ui.ListFooter(k.listHint(), 0, 0, 0, cols)
+		}
+		return out
 	}
 
 	narrow := cols < 80
@@ -1082,6 +1184,7 @@ func (k *Kanban) viewTree(rows []FlatRow, ctx app.RenderCtx) string {
 		{Text: branchHeader},
 	}, cols, false, true)}
 
+	hint := k.listHint()
 	start, visible, below := ui.WindowRows(rows, k.s.Selected, ctx.Interactive, termRows, ui.HintRows(hint, cols))
 	for i, r := range visible {
 		selected := ctx.Interactive && start+i == k.s.Selected
