@@ -186,7 +186,7 @@ printf "(do (require '[ct.spools.kanban :as kanban] '[skein.api.current.alpha :a
 
 ## Interactive dashboard
 
-The spool publishes `kanban-dash`, an interactive terminal board. Build its Bun dependencies after installing or upgrading the spool, then run it against the workspace selected by `mill`:
+The spool publishes `kanban-dash`, a Go interactive terminal board. Build its binary after installing or upgrading the spool, then run it against the workspace selected by `mill`:
 
 ```sh
 mill bin build kanban-dash

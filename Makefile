@@ -1,9 +1,10 @@
 .PHONY: kanban-export kanban-serve kanban-dash-check
 
+# The compiler and vet cover the Go dashboard's build and static checks.
 kanban-dash-check:
-	bun install --cwd scripts/agent-dash --frozen-lockfile --silent
-	bun run --cwd scripts/agent-dash test
-	bun run --cwd scripts/agent-dash typecheck
+	go build -C scripts/agent-dash ./...
+	go vet -C scripts/agent-dash ./...
+	go test -C scripts/agent-dash ./...
 
 # Standalone HTML export of a feature/epic card subtree; polls the strand CLI.
 # Pass the card id as ID and any extra flags (--out, --workspace, --open) as ARGS,

@@ -1763,7 +1763,7 @@
 (skein/defbin kanban-dash
   "Open the interactive Kanban board in the caller's terminal."
   {:executable [:family "bin/kanban-dash"]
-   :build ["bun" "install" "--cwd" "scripts/agent-dash" "--frozen-lockfile"]})
+   :build ["go" "build" "-C" "scripts/agent-dash" "-o" "kanban-dash" "."]})
 
 #_{:clj-kondo/ignore [:unresolved-symbol]}
 (skein/defquery kanban-cards-query

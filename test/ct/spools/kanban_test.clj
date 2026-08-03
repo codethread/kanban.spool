@@ -24,7 +24,7 @@
   (is (= {:name "kanban-dash"
           :doc "Open the interactive Kanban board in the caller's terminal."
           :executable [:family "bin/kanban-dash"]
-          :build ["bun" "install" "--cwd" "scripts/agent-dash" "--frozen-lockfile"]
+          :build ["go" "build" "-C" "scripts/agent-dash" "-o" "kanban-dash" "."]
           :provenance 'ct.spools.kanban}
          (select-keys (public-value 'kanban-dash)
                       [:name :doc :executable :build :provenance])))
