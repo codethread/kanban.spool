@@ -61,19 +61,6 @@
                             #"missing canonical entity fields"
                             (spool/entity-projection (dissoc strand field)))))))
 
-(defn stub-projection
-  "Stand-in tracker strategy for the card-view join tests.
-
-  Returns a canned projection for `widgets-run`, an empty projection for any
-  other run id (the tracker's honest \"no active run\" report), and carries an
-  extra step key so the tests can prove kanban trims steps to its own key set."
-  [_runtime run-id]
-  (if (= "widgets-run" run-id)
-    {:status "spec"
-     :ready [{:id "s1" :title "Draft spec" :role "step" :stage "spec"
-              :checkpoint false :extra "trimmed by kanban"}]}
-    {:status nil :ready []}))
-
 (defn- activate-kanban!
   "Activate Kanban from source so its authoring forms are collected."
   [rt]
@@ -141,8 +128,6 @@
      (fn [ctx]
        (let [rt (:runtime ctx)
              id (get-in (kanban/add! rt "Retained card" {}) [:card :id])]
-         (kanban/set-tracker! rt {:name "stub"
-                                  :project 'ct.spools.kanban-test/stub-projection})
          (spit (str (:config-dir ctx) "/init.clj") "")
          (let [removed (runtime/refresh! rt)]
            (is (= :removed (get-in removed [:modules :kanban :status])))
@@ -154,9 +139,7 @@
            (is (empty? (:patterns (kanban-surface rt))))
            (is (empty? (:queries (kanban-surface rt))))
            (is (= [id] (mapv :id (:pending (kanban/board rt))))
-               "stored cards survive module removal")
-           (is (str/includes? (:tracker (kanban/about rt)) "Bound tracker: stub")
-               "the accepted process-lifetime tracker state survives removal")))))))
+               "stored cards survive module removal")))))))
 
 (defn- op! [rt & argv]
   (weaver/op! rt 'kanban argv))
@@ -1079,128 +1062,22 @@
             (let [rendered ((requiring-resolve 'ct.spools.kanban/board-str) (op! rt "board"))]
               (is (str/includes? rendered "doing: Wire the thing")))))))))
 
-(deftest kanban-card-view-joins-the-bound-tracker
-  ;; The spool's one tracker seam: a card stamped with kanban/run-id (claim --run-id)
-  ;; projects the bound tracker's status and ready steps in card view.
+(deftest kanban-claim-preserves-an-opaque-run-pointer
   (with-kanban
     (fn [rt]
-      (let [card-id (get-in (op! rt "add" "Tracked feature") [:card :id])
-            plain-id (get-in (op! rt "add" "Untracked feature") [:card :id])]
-        (testing "claim --run-id stamps the run-id on the card as kanban/run-id"
-          (let [claimed (op! rt "claim" card-id "--owner" "agent" "--branch" "widgets"
-                             "--run-id" "widgets-run")]
-            (is (= "widgets-run" (get-in claimed [:card :attributes :kanban/run-id])))))
-        (kanban/set-tracker! rt {:name "stub" :project stub-projection})
-        (testing "a bound tracker joins the run's status and trimmed ready steps"
-          (let [{:keys [name run-id status ready]} (:tracker (op! rt "card" card-id))]
-            (is (= "stub" name))
-            (is (= "widgets-run" run-id))
-            (is (= "spec" status))
-            ;; kanban trims each step to its own closed key set — the tracker's
-            ;; :extra key never leaks into the kanban-owned card-view shape
-            (is (= [{:id "s1" :title "Draft spec" :role "step" :stage "spec" :checkpoint false}]
-                   ready))))
-        (testing "a tracker reporting no active run projects an honest nil status"
-          (let [idle-id (get-in (op! rt "add" "Idle-run feature") [:card :id])]
-            (op! rt "claim" idle-id "--owner" "agent" "--branch" "idle" "--run-id" "idle-run")
-            (is (= {:name "stub" :run-id "idle-run" :status nil :ready []}
-                   (:tracker (op! rt "card" idle-id))))))
-        (testing "an unstamped card carries no :tracker key"
-          (is (not (contains? (op! rt "card" plain-id) :tracker))))))))
-
-(deftest kanban-card-view-projects-a-stamped-run-as-unbound-with-no-tracker
-  ;; RFC-022.G5: a stamped card in a world with no binding projects honestly as
-  ;; unbound — the stamp visible, the missing strategy visible — never hidden.
-  (with-kanban
-    (fn [rt]
-      (let [card-id (get-in (op! rt "add" "Unbound-world feature") [:card :id])]
-        (op! rt "claim" card-id "--owner" "agent" "--branch" "widgets" "--run-id" "widgets-run")
-        (is (= {:name nil :run-id "widgets-run" :status nil :ready []}
-               (:tracker (op! rt "card" card-id))))))))
-
-(deftest kanban-set-tracker-resolves-a-symbol-valued-project
-  ;; :project may be a fully-qualified symbol, resolved with requiring-resolve at
-  ;; call time so a config reload rebinds cleanly.
-  (with-kanban
-    (fn [rt]
-      (let [card-id (get-in (op! rt "add" "Symbol-tracked feature") [:card :id])]
-        (op! rt "claim" card-id "--owner" "agent" "--branch" "widgets" "--run-id" "widgets-run")
-        (kanban/set-tracker! rt {:name "stub" :project 'ct.spools.kanban-test/stub-projection})
-        (let [{:keys [name status ready]} (:tracker (op! rt "card" card-id))]
-          (is (= "stub" name))
-          (is (= "spec" status))
-          (is (= ["s1"] (mapv :id ready))))))))
-
-(deftest kanban-set-tracker-rejects-a-malformed-binding
-  (with-kanban
-    (fn [rt]
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"must be a map"
-                            (kanban/set-tracker! rt "not-a-map")))
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"unknown keys"
-                            (kanban/set-tracker! rt {:name "x" :project stub-projection :surprise true})))
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #":name must be a non-blank string"
-                            (kanban/set-tracker! rt {:name "" :project stub-projection})))
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #":project must be a fully-qualified symbol or a function"
-                            (kanban/set-tracker! rt {:name "x" :project "nope"})))
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #":project must be a fully-qualified symbol or a function"
-                            (kanban/set-tracker! rt {:name "x" :project 'bare-symbol}))))))
-
-(deftest kanban-card-view-validates-and-propagates-tracker-failures
-  (with-kanban
-    (fn [rt]
-      (let [bad-id (get-in (op! rt "add" "Bad-projection feature") [:card :id])
-            boom-id (get-in (op! rt "add" "Throwing-tracker feature") [:card :id])]
-        (op! rt "claim" bad-id "--owner" "a" "--branch" "b" "--run-id" "widgets-run")
-        (op! rt "claim" boom-id "--owner" "a" "--branch" "c" "--run-id" "widgets-run")
-        (testing "a non-map projection result fails loudly"
-          (kanban/set-tracker! rt {:name "bad" :project (fn [_runtime _run-id] "not-a-map")})
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"projection does not match its owning spec"
-                                (op! rt "card" bad-id))))
-        (testing "missing or malformed projection fields fail loudly"
-          (doseq [projection [{:status nil}
-                              {:status 42 :ready []}
-                              {:status nil :ready nil}
-                              {:status nil :ready ["not-a-map"]}
-                              {:status nil :ready [{}]}
-                              {:status nil :ready [{:id "s1" :title "" :role "step"}]}
-                              {:status nil :ready [] :surprise true}]]
-            (kanban/set-tracker! rt {:name "malformed" :project (fn [_runtime _run-id] projection)})
-            (is (thrown-with-msg? clojure.lang.ExceptionInfo
-                                  #"projection does not match its owning spec"
-                                  (op! rt "card" bad-id)))))
-        (testing "a throwing strategy propagates rather than being masked"
-          (kanban/set-tracker! rt
-                               {:name "boom"
-                                :project (fn [_runtime _run-id]
-                                           (throw (ex-info "tracker exploded" {})))})
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"tracker exploded"
-                                (op! rt "card" boom-id))))))))
-
-(deftest kanban-card-view-rejects-a-malformed-stored-run
-  (with-kanban
-    (fn [rt]
-      (let [card (weaver/add! rt {:title "Malformed run card"
-                                  :attributes {:kanban/card "true"
-                                               :kanban/lane "claimed"
-                                               :kanban/type "feature"
-                                               :kanban/run-id ""}})]
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo
-                              #"Tracker view does not match its owning spec"
-                              (op! rt "card" (:id card))))))))
-
-(deftest kanban-about-names-the-bound-tracker
-  (with-kanban
-    (fn [rt]
-      (testing "with no binding, about states none is bound"
-        (is (re-find #"No tracker bound" (:tracker (op! rt "about")))))
-      (testing "after set-tracker!, about names the bound tracker"
-        (kanban/set-tracker! rt {:name "devflow" :project stub-projection})
-        (is (re-find #"devflow" (:tracker (op! rt "about"))))))))
+      (let [card-id (get-in (op! rt "add" "Run-linked feature") [:card :id])]
+        (let [claimed (op! rt "claim" card-id "--owner" "agent" "--branch" "widgets"
+                           "--run-id" "widgets-run")]
+          (is (= "widgets-run"
+                 (get-in claimed [:card :attributes :kanban/run-id]))))
+        (is (= "widgets-run"
+               (get-in (op! rt "card" card-id)
+                       [:card :attributes :kanban/run-id])))))))
 
 (deftest state-shape-matches-declared-version
   ;; Drift alarm for kanban's versioned spool-state: update this key set and
   ;; state-version together whenever new-state's shape changes.
-  (is (= #{:tracker-binding}
+  (is (= #{}
          (set (keys (#'kanban/new-state))))))
 
 (deftest kanban-batch-weave-creates-cards-and-dependencies

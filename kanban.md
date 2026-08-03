@@ -39,7 +39,7 @@ Card state lives under the `kanban/*` attribute topic, and labels under the sibl
 | `kanban/priority` | `p1`, `p2`, `p3` (default), or `p4`; cards without the attribute read as `p3`. |
 | `kanban/source` | Optional path or URL for design context (RFC, feature folder). |
 | `kanban/task` | `"true"` on task strands: `parent-of` children of a feature card whose status is derived, never stored. |
-| `kanban/run-id` | Optional tracker run-id; `kanban card` joins the bound tracker's status and ready steps (see [Tracker seam](#tracker-seam)). |
+| `kanban/run-id` | Optional opaque run pointer; agents query its workflow directly. |
 | `kanban/from` | Peering provenance serialized as `<board>:<card>` from the wire `:from` map. |
 | `kanban.label/<slug>` | String `"true"`, one key per label the card carries. Free-form: no vocabulary is registered up front. |
 | `owner` | Who is driving the work; required at claim. |
@@ -162,8 +162,8 @@ entirely when a card has none.
 notes, active work, ready frontier) plus `related`: a vector of `{:relation :strand}` entries for
 every `depends-on` edge touching the card. The relation is `depends-on` when the card is the
 dependent and `depended-on-by` when it is the dependency; entries sort by the other endpoint's id.
-Cards stamped with `kanban/run-id` (via `claim --run-id`) also carry `tracker`: the bound tracker's status
-for that run and its ready steps (see [Tracker seam](#tracker-seam)). `task add` hangs a task under a
+`claim --run-id` stamps `kanban/run-id` as an opaque pointer for agents to query through their workflow.
+`task add` hangs a task under a
 feature card (marker attr plus `parent-of`, optional `--depends-on` edges), and `task list` projects
 that card's tasks with their derived statuses (see the Task tier section). Both fail loudly on a
 missing, non-card, or non-feature target. Epics group features and never own tasks directly.
@@ -305,82 +305,6 @@ The receive op takes **one JSON object** as its single argument (guild parses it
 ```
 
 Unknown keys, a missing title, a bad priority or lane, a lone `:card`+`:epic`, an epic without features, and a malformed `:from` all fail spec validation loudly. The op returns JSON-safe ids only — `{:operation "kanban.send.v1" :card {:id …}}` for a single card, or `{:operation … :epic {:id …} :features [{:id …} …]}` for a bundle, features in input order. Every created card carries its provenance as one `kanban/from` attribute, `"<board>:<card>"` (e.g. `"backend:abc12"`), so the receiving board can trace a card to its origin without importing the source id as an identity.
-
-## Tracker seam
-
-Kanban core has no compile- or load-time dependency on any tracker. Instead, trusted config
-binds a **run-tracker strategy** for the weaver lifetime, and the `kanban card` view joins it in
-exactly one seam. This mirrors chime's notifier binding: a vocabulary-agnostic engine ships
-unbound, config supplies the implementation, and unbound use degrades honestly.
-
-**Binding.** Bind the strategy once per weaver lifetime (and again after every startup or config
-reload — module activation never binds a default):
-
-```clojure
-(kanban/set-tracker! runtime
-  {:name "devflow"
-   :project 'kanban-tracker/devflow-projection})
-```
-
-- `:name` — a non-blank string naming the convention; it surfaces in `kanban about` and in the
-  card view's `tracker` so a cold agent knows which tracker the steps come from.
-- `:project` — a fully-qualified symbol (resolved with `requiring-resolve` at call time, so a
-  reload rebinds cleanly) or a function. Contract: `(project runtime run-id)` returns
-  `{:status <string|nil> :ready [step ...]}`. Kanban selects each step down to the closed key
-  set `#{:id :title :role :stage :checkpoint}`, so the card-view shape stays kanban-owned whatever
-  the tracker returns.
-
-A malformed binding is rejected loudly (unknown keys, a blank name, or a `:project` that is
-neither a fully-qualified symbol nor a function). The owning Clojure specs are
-`:ct.spools.kanban/tracker-binding` for the binding,
-`:ct.spools.kanban/tracker-projection` for the strategy result, and
-`:ct.spools.kanban/tracker-view` for the public card-view shape. A projection must contain
-exactly `:status` and `:ready`; every step must be a map with non-blank `:id`, `:title`, and
-`:role`. Malformed status values, missing keys, non-vector steps, and invalid step entries fail with
-the tracker name and run id in the error data. Kanban also validates the constructed public view,
-so malformed legacy run attributes fail instead of leaking through as an ambiguous projection.
-
-**The join.** A card names its run through the `kanban/run-id` attribute (`claim --run-id <run-id>`
-stamps it). For a stamped card, `card` carries a `tracker` key:
-
-```json
-"tracker": {"name": "devflow",
-            "run-id": "widgets-run",
-            "status": "spec",
-            "ready": [{"id": "...", "title": "...", "role": "step", "stage": "spec"}]}
-```
-
-- **binding present** — the bound strategy's status and ready steps; a tracker that reports no
-  active run projects a `null` status with no steps rather than hiding the key.
-- **binding absent** — `{"name": null, "run-id": "widgets-run", "status": null, "ready": []}`:
-  the stamp is visible and the missing strategy is visible.
-- **binding throws** — the card view fails with the strategy's error. The binding is repo-owner
-  config; masking its failures would violate fail-loud (TEN-003).
-
-An unstamped card carries no `tracker` key at all. Kanban only reads tracker state; it never
-writes it.
-
-**Worked example: the devflow adapter.** A repo that stages work through
-[`ct.spools.devflow`](https://github.com/codethread/devflow.spool) binds a small trusted-config
-module (roughly fifteen lines) that composes devflow's read fns into the projection shape:
-
-```clojure
-(defn devflow-projection [runtime run-id]
-  (let [stage (some-> (devflow/feature-roots runtime run-id) first
-                      (attr-value :devflow/stage))]
-    {:status stage
-     :ready (if stage (devflow/ready runtime run-id) [])}))
-
-(defn install! [runtime]
-  (kanban/set-tracker! runtime
-                       {:name "devflow"
-                        :project 'kanban-tracker/devflow-projection}))
-```
-
-The devflow spool stays kanban-ignorant, and the adapter lives in the one place that knows both
-vocabularies — consumer config, not either spool. A repo with a different tracker writes its own
-module against the same two-key contract; a repo with no tracker skips the block entirely and
-stamped cards project as unbound. The consuming [README](./README.md) carries the full recipe.
 
 ## Queries
 
