@@ -11,7 +11,7 @@ This record prepares the next Kanban marker, `v24`. It is not a tag or a publica
 - Millstrand baseline: the core release input is the SHA-only map from MSR-04 (`bxwq0`), with coordinate `io.millstrand/millstrand`; no tag or peeled-SHA field is used for that core entry.
 - Floor: unchanged. This coordinated identity break does not add or raise `:millstrand/min`.
 - Identity gate: `make identity-check` scans active source, tests, docs, CI, dependency/build files, and workspace templates. The empty allowlist records that no active legacy identity exception is retained.
-- Release proof: run `bin/verify-release --mode pre-tag --source-root "$PWD" --core-release <MSR-04-release.json>` before landing, then run its published mode against the annotated `v24` tag and peeled SHA after landing. The verifier loads `ct.spools.kanban` from a clean consumer and proves `.millstrand`/`.ms` database identity.
+- Release proof: run `bin/verify-release --mode pre-tag --source-root "$PWD" --core-release <MSR-04-release.json>` before landing. After landing and tagging, run `bin/verify-release --mode published --repository https://github.com/codethread/kanban.spool.git --tag v24 --sha <peeled-40-hex> --core-release <MSR-04-release.json>`. The verifier loads `ct.spools.kanban` from a clean consumer and proves `.millstrand`/`.ms` database identity.
 - Authorization: the accepted Millstrand rename plan and Epic `ke3rd` standing authorization cover the coordinated pre-v1 break, release publication, and marker creation. No callback or namespace compatibility shim is retained.
 
 Rollback is a consumer action: retain or restore the old `v23` pin and peeled SHA. Do not move or replace the old tag.
