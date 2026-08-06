@@ -288,7 +288,7 @@ func DescribeView(view FilterView) string {
 
 // ── store ────────────────────────────────────────────────────────────────────
 // Saved views are a UI preference, not coordination data, so they live in the
-// user's cache rather than the workspace — writing under .skein would surface as
+// user's cache rather than the workspace — writing under .millstrand would surface as
 // a dirty tree on every validation run. One file holds every workspace's views,
 // keyed by workspace root, so dashboards over different worlds keep their own.
 
@@ -301,7 +301,7 @@ func FiltersFile() string {
 		}
 		cache = filepath.Join(home, ".cache")
 	}
-	return filepath.Join(cache, "skein", "agent-dash", "filters.json")
+	return filepath.Join(cache, "millstrand", "agent-dash", "filters.json")
 }
 
 // The store is parsed strictly (TEN-003): a value we did not expect is reported

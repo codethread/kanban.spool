@@ -1,4 +1,4 @@
-.PHONY: kanban-export kanban-serve kanban-dash-check
+.PHONY: kanban-export kanban-serve kanban-dash-check identity-check
 
 # The compiler and vet cover the Go dashboard's build and static checks.
 kanban-dash-check:

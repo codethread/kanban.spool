@@ -8,7 +8,7 @@
 > Reach for the cookbook when you want a runnable flow, and this doc for what
 > the board guarantees.
 
-The kanban spool is the user-facing work board held entirely in Skein strands. It tracks **user↔agent** work: everything a user asks for becomes a `feature` card (occasionally grouped under an `epic`), and every agent working directly with a user works under a claimed card. It complements — never replaces — the execution strands that hang beneath cards.
+The kanban spool is the user-facing work board held entirely in Millstrand strands. It tracks **user↔agent** work: everything a user asks for becomes a `feature` card (occasionally grouped under an `epic`), and every agent working directly with a user works under a claimed card. It complements — never replaces — the execution strands that hang beneath cards.
 
 ## Model
 
@@ -179,7 +179,7 @@ strand weave --pattern kanban-batch --input '{"items":[{"key":"design","title":"
 The CLI stays JSON-only (TEN-006); the human rendering lives on the REPL surface:
 
 ```sh
-printf "(do (require '[ct.spools.kanban :as kanban] '[skein.api.current.alpha :as current]) (kanban/print-board! (current/runtime)))\n" | mill weaver repl --stdin
+printf "(do (require '[ct.spools.kanban :as kanban] '[millstrand.api.current.alpha :as current]) (kanban/print-board! (current/runtime)))\n" | mill weaver repl --stdin
 ```
 
 `print-board!` prints a stacked-lane ASCII board (epics, refinement, pending, claimed and in_review with owner/branch and doing-task, needs-review); `board-str` is the pure renderer over the `board` result for reuse.
@@ -226,28 +226,28 @@ Only queued work travels. A `claimed`, `in_review`, or closed card is in-flight 
 
 ### Loading
 
-Peering depends on the `skein.spools.guild` spool for its receive op and on `skein.api.peers.alpha` for discovery. `skein.spools.guild` loads like any other spool — through the consuming workspace's `spools.edn` approval plus a runtime sync — so a peering repo approves **both** guild and kanban:
+Peering depends on the `millstrand.spools.guild` spool for its receive op and on `millstrand.api.peers.alpha` for discovery. `millstrand.spools.guild` loads like any other spool — through the consuming workspace's `spools.edn` approval plus a runtime sync — so a peering repo approves **both** guild and kanban:
 
 ```clojure
 ;; spools.edn (or spools.local.edn overlay)
-{:spools {skein.spools/guild {:local/root "/path/to/your/skein/spools/guild"}
+{:spools {millstrand.spools/guild {:local/root "/path/to/your/millstrand/spools/guild"}
           codethread/kanban {:git/url "git@github.com:codethread/kanban.spool.git"
                              :git/sha "<40-hex-sha-for-the-approved-commit>"}}}
 ```
 
-Peering stamps every card it sends with the local weaver's **published name**, so set one in `.skein/config.json` (a machine with two clones can override it per-checkout in the gitignored `.skein/config.local.json`):
+Peering stamps every card it sends with the local weaver's **published name**, so set one in `.millstrand/config.json` (a machine with two clones can override it per-checkout in the gitignored `.millstrand/config.local.json`):
 
 ```json
 {"configFormat": "alpha", "name": "backend"}
 ```
 
-Then declare the modules in order: guild first, kanban second, peering last. These forms-only declarations require Skein commit `24f900464d9b26e8e3d81550eef3a06230de5395` or a descendant; no Skein release marker contains that floor yet. The peering lifecycle fails loudly if Guild or the Kanban board op is not already registered, so the `:after` ordering is a hard prerequisite, not a preference:
+Then declare the modules in order: guild first, kanban second, peering last. These forms-only declarations require Millstrand commit `24f900464d9b26e8e3d81550eef3a06230de5395` or a descendant; no Millstrand release marker contains that floor yet. The peering lifecycle fails loudly if Guild or the Kanban board op is not already registered, so the `:after` ordering is a hard prerequisite, not a preference:
 
 ```clojure
 (runtime/module! runtime
   :guild
-  {:ns 'skein.spools.guild
-   :spools ['skein.spools/guild]
+  {:ns 'millstrand.spools.guild
+   :spools ['millstrand.spools/guild]
    :required? true})
 
 (runtime/module! runtime
@@ -259,7 +259,7 @@ Then declare the modules in order: guild first, kanban second, peering last. The
 (runtime/module! runtime
   :kanban/peering
   {:ns 'ct.spools.kanban.peering
-   :spools ['codethread/kanban 'skein.spools/guild]
+   :spools ['codethread/kanban 'millstrand.spools/guild]
    :after [:guild :kanban]
    :required? true})
 ```

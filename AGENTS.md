@@ -1,10 +1,10 @@
 # Agents
 
-<!-- mill:skein-prime -->
-## Skein / strand
+<!-- mill:millstrand-prime -->
+## Millstrand / strand
 
-This repo uses Skein strands to track work. Orientation ships in the `mill` CLI:
+This repo uses Millstrand strands to track work. Orientation ships in the `mill` CLI:
 
-- `mill skein prime` — where the Skein source and docs live, and how to extend this repo's `.skein/` config.
+- `mill millstrand prime` — where the Millstrand source and docs live, and how to extend this repo's `.millstrand/` config.
 - `mill strand prime` — the strand planning/tracking workflow; run it before multi-step work.
-<!-- /mill:skein-prime -->
+<!-- /mill:millstrand-prime -->

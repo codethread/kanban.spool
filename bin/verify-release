@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage:
+  bin/verify-release --mode pre-tag --source-root DIR --core-release FILE
+  bin/verify-release --mode published --repository URL --tag vN --sha SHA \
+    --core-release FILE
+EOF
+  exit 2
+}
+
+mode=""
+source_root=""
+repository=""
+tag=""
+sha=""
+core_release=""
+
+while (($# > 0)); do
+  case "$1" in
+    --mode) [[ $# -ge 2 ]] || usage; mode=$2; shift 2 ;;
+    --source-root) [[ $# -ge 2 ]] || usage; source_root=$2; shift 2 ;;
+    --repository) [[ $# -ge 2 ]] || usage; repository=$2; shift 2 ;;
+    --tag) [[ $# -ge 2 ]] || usage; tag=$2; shift 2 ;;
+    --sha) [[ $# -ge 2 ]] || usage; sha=$2; shift 2 ;;
+    --core-release) [[ $# -ge 2 ]] || usage; core_release=$2; shift 2 ;;
+    -h|--help) usage ;;
+    *) echo "verify-release: unknown argument: $1" >&2; usage ;;
+  esac
+done
+
+die() {
+  echo "verify-release: $*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "missing command $1"
+}
+
+[[ "$mode" == "pre-tag" || "$mode" == "published" ]] || usage
+[[ -f "$core_release" ]] || die "--core-release must name a JSON file"
+require_command git
+require_command python3
+require_command clojure
+
+core_values=$(python3 - "$core_release" <<'PY'
+import json
+import re
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    release = json.load(handle)
+
+required = {
+    "card", "repository", "coordinate", "ref-kind", "sha",
+    "landed-main-commit", "land-run", "verification",
+}
+missing = sorted(required - release.keys())
+if missing:
+    raise SystemExit(f"core release is missing fields: {', '.join(missing)}")
+forbidden = sorted({"tag", "peeled-sha"} & release.keys())
+if forbidden:
+    raise SystemExit(f"core release contains forbidden fields: {', '.join(forbidden)}")
+if release["ref-kind"] != "sha":
+    raise SystemExit("core release ref-kind must be sha")
+if release["coordinate"] != "io.millstrand/millstrand":
+    raise SystemExit("core release coordinate must be io.millstrand/millstrand")
+for field in ("sha", "landed-main-commit"):
+    if not re.fullmatch(r"[0-9a-f]{40}", release[field]):
+        raise SystemExit(f"core release {field} must be a lowercase 40-hex SHA")
+if not isinstance(release["verification"], list) or not release["verification"]:
+    raise SystemExit("core release verification must be a non-empty array")
+print(release["repository"])
+print(release["sha"])
+print(release["coordinate"])
+PY
+)
+core_repository=$(printf '%s\n' "$core_values" | sed -n '1p')
+core_sha=$(printf '%s\n' "$core_values" | sed -n '2p')
+core_coordinate=$(printf '%s\n' "$core_values" | sed -n '3p')
+if [[ "$core_repository" == https://* || "$core_repository" == ssh://* || "$core_repository" == git@* ]]; then
+  core_repository_url="$core_repository"
+else
+  core_repository_url="https://github.com/${core_repository%.git}.git"
+fi
+
+if [[ "$mode" == "pre-tag" ]]; then
+  [[ -n "$source_root" && -d "$source_root" ]] || die "--source-root must name a directory"
+  [[ -z "$repository" && -z "$tag" && -z "$sha" ]] || \
+    die "--repository, --tag, and --sha are published-mode options"
+  source_root=$(cd "$source_root" && pwd -P)
+  [[ -d "$source_root/.git" || -f "$source_root/.git" ]] || \
+    die "source root is not a Git checkout: $source_root"
+  candidate_root="$source_root"
+  kanban_ref="candidate:$source_root"
+else
+  [[ -z "$source_root" ]] || die "--source-root is a pre-tag option"
+  [[ -n "$repository" && -n "$tag" && -n "$sha" ]] || \
+    die "published mode requires --repository, --tag, and --sha"
+  [[ "$tag" =~ ^v[0-9]+$ ]] || die "tag must be an annotated v<int> marker"
+  [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || die "sha must be a lowercase 40-hex commit"
+  [[ "$repository" != *"../"* && "$repository" != /* ]] || \
+    die "published repository must not be a local path"
+  candidate_root=""
+  kanban_ref="$tag@$sha"
+fi
+
+tmp_root=$(mktemp -d /tmp/kanban-release.XXXXXX)
+consumer_root="$tmp_root/consumer"
+state_root=$(mktemp -d /tmp/ks-state.XXXXXX)
+consumer_deps="$consumer_root/deps.edn"
+mill_log="$tmp_root/mill.log"
+mill_pid=""
+
+cleanup() {
+  local rc=$?
+  if [[ -n "$mill_pid" ]] && kill -0 "$mill_pid" 2>/dev/null; then
+    kill "$mill_pid" 2>/dev/null || true
+    wait "$mill_pid" 2>/dev/null || true
+  fi
+  if ((rc != 0)) && [[ -s "$mill_log" ]]; then
+    sed -n '1,160p' "$mill_log" >&2 || true
+  fi
+  rm -rf "$tmp_root" "$state_root"
+  trap - EXIT
+  exit "$rc"
+}
+trap cleanup EXIT
+
+if [[ "$mode" == "published" ]]; then
+  git ls-remote --exit-code "$repository" "refs/tags/$tag" >/dev/null || \
+    die "published repository has no tag $tag"
+  remote_sha=$(git ls-remote "$repository" "refs/tags/$tag^{}" | awk 'NR == 1 {print $1}')
+  [[ "$remote_sha" == "$sha" ]] || \
+    die "tag $tag resolves to ${remote_sha:-<no peeled SHA>}, expected $sha"
+  git clone --quiet --depth 1 --branch "$tag" "$repository" "$tmp_root/kanban"
+  candidate_root="$tmp_root/kanban"
+  [[ "$(git -C "$candidate_root" rev-parse HEAD)" == "$sha" ]] || \
+    die "checked-out $tag does not match $sha"
+fi
+
+"$candidate_root/bin/identity-check"
+
+mkdir -p "$consumer_root"
+if [[ "$mode" == "pre-tag" ]]; then
+  cat >"$consumer_deps" <<EOF
+{:paths ["$candidate_root/src"]
+ :deps {$core_coordinate {:git/url "$core_repository_url" :git/sha "$core_sha"}}}
+EOF
+else
+  cat >"$consumer_deps" <<EOF
+{:deps {io.millstrand/millstrand {:git/url "$core_repository_url" :git/sha "$core_sha"}
+        codethread/kanban {:git/url "$repository" :git/tag "$tag" :git/sha "$sha"}}}
+EOF
+fi
+
+if grep -Eq ':local/root|:millstrand/source-root' "$consumer_deps"; then
+  die "generated consumer metadata contains a local or source-root override"
+fi
+(cd "$consumer_root" && clojure -M -e \
+  "(require 'ct.spools.kanban) (println :kanban-consumer-loaded)")
+
+mill_bin=${MILL_BIN:-$(command -v mill || true)}
+[[ -n "$mill_bin" ]] || die "missing mill executable for marker/database acceptance"
+workspace_root="$tmp_root/workspace"
+config_dir="$workspace_root/.millstrand"
+alias_dir="$workspace_root/.ms"
+mkdir -p "$workspace_root" "$state_root"
+
+XDG_STATE_HOME="$state_root" "$mill_bin" start >"$mill_log" 2>&1 &
+mill_pid=$!
+metadata_path=""
+deadline=$((SECONDS + 20))
+until [[ -n "$metadata_path" && -f "$metadata_path" ]]; do
+  kill -0 "$mill_pid" 2>/dev/null || die "mill exited before publishing runtime metadata"
+  ((SECONDS < deadline)) || die "mill did not publish runtime metadata"
+  metadata_path=$(find "$state_root" -type f -name mill.json -print -quit)
+  sleep 0.05
+done
+
+XDG_STATE_HOME="$state_root" "$mill_bin" init --workspace "$config_dir" >/dev/null
+XDG_STATE_HOME="$state_root" "$mill_bin" weaver start --workspace "$config_dir" >/dev/null
+status_before=$(XDG_STATE_HOME="$state_root" "$mill_bin" weaver status --workspace "$config_dir")
+database_before=$(printf '%s\n' "$status_before" | python3 -c \
+  'import json, sys; print(json.load(sys.stdin)["database_path"])')
+XDG_STATE_HOME="$state_root" "$mill_bin" weaver stop --workspace "$config_dir" >/dev/null
+mv "$config_dir" "$alias_dir"
+status_after=$(XDG_STATE_HOME="$state_root" "$mill_bin" weaver status --workspace "$alias_dir")
+database_after=$(printf '%s\n' "$status_after" | python3 -c \
+  'import json, sys; print(json.load(sys.stdin)["database_path"])')
+[[ "$(cd "$(dirname "$database_before")" && pwd -P)/$(basename "$database_before")" == \
+   "$(cd "$(dirname "$database_after")" && pwd -P)/$(basename "$database_after")" ]] || \
+  die ".millstrand and .ms selected different databases"
+
+XDG_STATE_HOME="$state_root" "$mill_bin" weaver start --workspace "$alias_dir" >/dev/null
+XDG_STATE_HOME="$state_root" "$mill_bin" weaver stop --workspace "$alias_dir" >/dev/null
+
+output_dir="$candidate_root/target/release"
+mkdir -p "$output_dir"
+output_file="$output_dir/$mode.json"
+MODE="$mode" KANBAN_REF="$kanban_ref" CORE_REPOSITORY="$core_repository_url" \
+CORE_SHA="$core_sha" OUTPUT_FILE="$output_file" python3 - <<'PY'
+import json
+import os
+
+payload = {
+    "mode": os.environ["MODE"],
+    "kanban": os.environ["KANBAN_REF"],
+    "core": {
+        "repository": os.environ["CORE_REPOSITORY"],
+        "sha": os.environ["CORE_SHA"],
+    },
+    "consumer": "ct.spools.kanban",
+    "marker-proof": ".millstrand and .ms share the same database path",
+}
+with open(os.environ["OUTPUT_FILE"], "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2)
+    handle.write("\n")
+PY
+
+echo "kanban release verification: clean"
+echo "  mode: $mode"
+echo "  kanban: $kanban_ref"
+echo "  core: $core_repository@$core_sha"
+echo "  evidence: $output_file"

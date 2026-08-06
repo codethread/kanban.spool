@@ -8,13 +8,13 @@
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [skein.spools.guild]
-            [skein.api.graph.alpha :as graph]
-            [skein.api.runtime.alpha :as runtime]
-            [skein.api.weaver.alpha :as weaver]
+            [millstrand.spools.guild]
+            [millstrand.api.graph.alpha :as graph]
+            [millstrand.api.runtime.alpha :as runtime]
+            [millstrand.api.weaver.alpha :as weaver]
             [ct.spools.kanban :as kanban]
             [ct.spools.kanban.peering :as peering]
-            [skein.test.alpha :as t]))
+            [millstrand.test.alpha :as t]))
 
 (defn- public-value [var-sym]
   (some-> (ns-resolve 'ct.spools.kanban.peering var-sym) var-get))
@@ -52,7 +52,7 @@
   the refresh result unless the module applied."
   [rt]
   (let [result (runtime/module! rt :guild
-                                {:ns 'skein.spools.guild})
+                                {:ns 'millstrand.spools.guild})
         status (get-in result [:modules :guild :status])]
     (when-not (contains? #{:applied :unchanged} status)
       (throw (ex-info "guild module activation failed"
@@ -110,8 +110,8 @@
                                      (peering/open-peering! {:runtime rt})))
             remedy (:remedy (ex-data ex))]
         (is (= "guild" (:missing (ex-data ex))))
-        (is (str/includes? remedy "skein.spools.guild"))
-        (is (str/includes? remedy "skein.spools/guild"))))))
+        (is (str/includes? remedy "millstrand.spools.guild"))
+        (is (str/includes? remedy "millstrand.spools/guild"))))))
 
 (deftest peering-owner-surface-covers-both-local-ops
   ;; The receive operation remains Guild's dispatch-table declaration; these
@@ -193,13 +193,13 @@
 
 (deftest omitting-peering-retracts-local-ops-and-preserves-guild-receiver
   (let [preamble
-        (str "(require '[skein.api.current.alpha :as current]\n"
-             "         '[skein.api.runtime.alpha :as runtime])\n"
+        (str "(require '[millstrand.api.current.alpha :as current]\n"
+             "         '[millstrand.api.runtime.alpha :as runtime])\n"
              "(def runtime (current/runtime))\n")
         guild-and-kanban
         (str preamble
              "(runtime/module! runtime :guild\n"
-             "  {:ns 'skein.spools.guild})\n"
+             "  {:ns 'millstrand.spools.guild})\n"
              "(runtime/module! runtime :kanban\n"
              "  {:ns 'ct.spools.kanban :after [:guild]})\n")
         with-peering-init
