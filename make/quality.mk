@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test
+.PHONY: fmt fmt-check lint test identity-check
 
 fmt:
 	clojure -M:format/fix
@@ -12,3 +12,6 @@ lint:
 
 test:
 	clojure -M:test
+
+identity-check:
+	bash bin/identity-check

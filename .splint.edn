@@ -10,7 +10,7 @@
  ;; sites. Adjudicated off; revisit only as a deliberate whole-repo modernisation.
  lint/prefer-method-values {:enabled false}
 
- ;; Skein is a long-lived daemon (weaver) that dynamically loads and resolves trusted
+ ;; Millstrand is a long-lived daemon (weaver) that dynamically loads and resolves trusted
  ;; spool/config code. Every `(catch Throwable ...)` here is a deliberate boundary that
  ;; MUST see Errors too: dynamic `requiring-resolve`/`load-file`/EDN reads that wrap any
  ;; failure (incl. LinkageError/NoClassDefFoundError) in diagnostic ex-info and rethrow;

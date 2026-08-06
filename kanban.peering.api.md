@@ -23,7 +23,7 @@ Opt-in board peering: the RECEIVE guild op plus the SEND-side local ops.
     board over `kanban.send.v1`.
 
   The two peering seams onto sibling weavers — enumerate/probe and invoke — go
-  through `skein.api.peers.alpha` behind `*list-peers*`, `*list-peer-guild*`, and
+  through `millstrand.api.peers.alpha` behind `*list-peers*`, `*list-peer-guild*`, and
   `*send-card*` so classification and payload building are testable without a
   live socket peer.
 

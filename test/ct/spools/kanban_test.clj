@@ -3,16 +3,16 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [skein.api.graph.alpha :as graph]
-            [skein.api.patterns.alpha :as patterns]
-            [skein.api.runtime.alpha :as runtime]
-            [skein.api.vocab.alpha :as vocab]
-            [skein.api.weaver.alpha :as weaver]
-            [skein.api.format.alpha :as fmt]
-            [skein.api.spool.alpha :as spool]
+            [millstrand.api.graph.alpha :as graph]
+            [millstrand.api.patterns.alpha :as patterns]
+            [millstrand.api.runtime.alpha :as runtime]
+            [millstrand.api.vocab.alpha :as vocab]
+            [millstrand.api.weaver.alpha :as weaver]
+            [millstrand.api.format.alpha :as fmt]
+            [millstrand.api.spool.alpha :as spool]
             [ct.spools.kanban :as kanban]
             [ct.spools.kanban-peering-test]
-            [skein.test.alpha :as t]))
+            [millstrand.test.alpha :as t]))
 
 (defn- public-value [var-sym]
   (some-> (ns-resolve 'ct.spools.kanban var-sym) var-get))
@@ -75,7 +75,7 @@
   "Run f with a fresh weaver runtime that has the kanban module active.
 
   The runtime lifecycle and isolation come from the public author test helper
-  (`skein.test.alpha/with-weaver-world`). kanban ships on this repo's src
+  (`millstrand.test.alpha/with-weaver-world`). kanban ships on this repo's src
   classpath, so source activation collects its static declarations. Throws with
   the refresh result unless the module applied."
   [f]
@@ -118,8 +118,8 @@
 
 (deftest omitting-kanban-retracts-static-entries-and-closes-its-resource
   (let [init-source
-        (str "(require '[skein.api.current.alpha :as current]\n"
-             "         '[skein.api.runtime.alpha :as runtime])\n"
+        (str "(require '[millstrand.api.current.alpha :as current]\n"
+             "         '[millstrand.api.runtime.alpha :as runtime])\n"
              "(def runtime (current/runtime))\n"
              "(runtime/module! runtime :kanban {:ns 'ct.spools.kanban})\n")]
     (t/run-with-weaver-world
@@ -189,8 +189,8 @@
                       (filter #(= "kanban" (:name %)))
                       first)]
         (is (some? decl) "the module resource declares the kanban/* attribute namespace")
-        (is (= :skein/spools-kanban (:owner decl))
-            "kanban/* is owned by the single verified use-key :skein/spools-kanban")
+        (is (= :millstrand/spools-kanban (:owner decl))
+            "kanban/* is owned by the single verified use-key :millstrand/spools-kanban")
         (is (every? #(str/starts-with? % "kanban/") (:keys decl))
             "advisory :keys all live under the kanban/ prefix")
         (is (contains? (set (:keys decl)) "kanban/task")

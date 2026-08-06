@@ -53,7 +53,7 @@ var (
 // Opts is the parsed command line.
 func Opts() Options { return opts }
 
-// WorkspaceRoot is the directory holding the .skein workspace — the repo the
+// WorkspaceRoot is the directory holding the .millstrand workspace — the repo the
 // dashboard reports on, and the cwd every editor spawn inherits.
 func WorkspaceRoot() string { return workspaceRoot }
 
@@ -77,7 +77,7 @@ func ParseFlags(args []string) error {
 	secs := fs.Float64("interval", 2, "poll interval in seconds")
 	fs.BoolVar(&opts.All, "all", false, "show all cards, not just active ones")
 	fs.BoolVar(&opts.Once, "once", false, "print a single frame and exit")
-	fs.StringVar(&opts.Workspace, "workspace", "", "path to the .skein workspace")
+	fs.StringVar(&opts.Workspace, "workspace", "", "path to the .millstrand workspace")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return ErrHelpRequested
@@ -130,7 +130,7 @@ func resolveWorkspace() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("cannot resolve canonical repo root: %w", err)
 	}
-	return filepath.Join(filepath.Dir(strings.TrimSpace(out)), ".skein"), nil
+	return filepath.Join(filepath.Dir(strings.TrimSpace(out)), ".millstrand"), nil
 }
 
 // Never hand a child the controlling tty: strand and git reset terminal modes

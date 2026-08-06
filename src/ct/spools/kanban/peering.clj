@@ -19,19 +19,19 @@
     board over `kanban.send.v1`.
 
   The two peering seams onto sibling weavers — enumerate/probe and invoke — go
-  through `skein.api.peers.alpha` behind `*list-peers*`, `*list-peer-guild*`, and
+  through `millstrand.api.peers.alpha` behind `*list-peers*`, `*list-peer-guild*`, and
   `*send-card*` so classification and payload building are testable without a
   live socket peer."
   (:require [clojure.data.json :as json]
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
-            [skein.api.format.alpha :as fmt]
-            [skein.api.graph.alpha :as graph]
-            [skein.api.lifecycle.alpha :as lifecycle]
-            [skein.api.peers.alpha :as peers]
-            [skein.api.skein.alpha :as skein]
-            [skein.api.weaver.alpha :as weaver]
-            [skein.api.spool.alpha :refer [attr-get fail!]]
+            [millstrand.api.format.alpha :as fmt]
+            [millstrand.api.graph.alpha :as graph]
+            [millstrand.api.lifecycle.alpha :as lifecycle]
+            [millstrand.api.peers.alpha :as peers]
+            [millstrand.api.millstrand.alpha :as millstrand]
+            [millstrand.api.weaver.alpha :as weaver]
+            [millstrand.api.spool.alpha :refer [attr-get fail!]]
             [ct.spools.kanban :as kanban]))
 
 ;; ---------------------------------------------------------------------------
@@ -205,13 +205,13 @@
 ;; ---------------------------------------------------------------------------
 ;; peer transport seams: enumerate, probe, and invoke sibling weavers
 ;;
-;; The two touchpoints onto `skein.api.peers.alpha` sit behind dynamic vars so
+;; The two touchpoints onto `millstrand.api.peers.alpha` sit behind dynamic vars so
 ;; tests exercise classification and payload building without a live socket
 ;; peer. Real use never rebinds them.
 ;; ---------------------------------------------------------------------------
 
 (defn- list-peers*
-  "Return `skein.api.peers.alpha/peers` rows (siblings under the mill state root)."
+  "Return `millstrand.api.peers.alpha/peers` rows (siblings under the mill state root)."
   []
   (peers/peers))
 
@@ -507,7 +507,7 @@
   (let [name (:name metadata)]
     (when-not (non-blank-string? name)
       (fail! "This weaver publishes no name; kanban-send cannot stamp provenance"
-             {:remedy "set \"name\" in .skein/config.json and restart the weaver"}))
+             {:remedy "set \"name\" in .millstrand/config.json and restart the weaver"}))
     name))
 
 (defn- preflight-target!
@@ -671,8 +671,8 @@
            {:missing "guild" :registered-ops (mapv :name (weaver/ops rt))
             :remedy (fmt/reflow "
                      |Activate the guild module with
-                     |(runtime/module! runtime :guild {:ns 'skein.spools.guild
-                     |:spools ['skein.spools/guild] :required? true}) before
+                     |(runtime/module! runtime :guild {:ns 'millstrand.spools.guild
+                     |:spools ['millstrand.spools/guild] :required? true}) before
                      |activating the kanban peering module.")}))
   (when-not (op-registered? rt "kanban")
     (fail! "kanban peering activation requires the kanban module to be active first"
@@ -684,7 +684,7 @@
                      |activating the kanban peering module.")})))
 
 #_{:clj-kondo/ignore [:unresolved-symbol]}
-(skein/defop kanban-peers
+(millstrand/defop kanban-peers
   "List sibling weavers and whether each accepts peered kanban cards."
   {:arg-spec kanban-peers-arg-spec
    :returns kanban-peers-returns}
@@ -692,7 +692,7 @@
   (peers-result ctx))
 
 #_{:clj-kondo/ignore [:unresolved-symbol]}
-(skein/defop kanban-send
+(millstrand/defop kanban-send
   "Send a pending or refinement card (or epic bundle) to a sibling weaver's board."
   {:arg-spec kanban-send-arg-spec
    :returns kanban-send-returns}
@@ -702,7 +702,7 @@
 (defn open-peering!
   "Register the guarded `kanban.send.v1` receiver through Guild's supported seam."
   [{:keys [runtime]}]
-  (let [guild-register-op! (requiring-resolve 'skein.spools.guild/register-op!)]
+  (let [guild-register-op! (requiring-resolve 'millstrand.spools.guild/register-op!)]
     (require-peering-prerequisites! runtime)
     (guild-register-op! runtime 'kanban.send.v1
                         {:doc "Receive a peered kanban card or epic bundle onto this board."

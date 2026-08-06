@@ -2,18 +2,18 @@
  :aliases
  {:test {;; The guild spool has no deps.edn manifest yet, so its source root is added
          ;; directly to the test classpath (sibling-checkout convention, matching the
-         ;; io.skein/skein :local/root below). Once spools/guild ships a manifest this
-         ;; can become an :extra-deps {io.skein/guild {:local/root "../skein-src/spools/guild"}}.
-         :extra-paths ["test" "../skein-src/spools/guild/src"]
-         ;; Point this at the Skein checkout you want to test against. This repo
-         ;; is developed beside skein-src, so the default works for local owner
+         ;; io.millstrand/millstrand :local/root below). Once spools/guild ships a manifest this
+         ;; can become an :extra-deps {io.millstrand/guild {:local/root "../millstrand/spools/guild"}}.
+         :extra-paths ["test" "../millstrand/spools/guild/src"]
+         ;; Point this at the Millstrand checkout you want to test against. This repo
+         ;; is developed beside millstrand, so the default works for local owner
          ;; checkouts and CI layouts that place the repos as siblings.
          ;;
          ;; Kanban core carries no tracker dependency (RFC-022): the run
          ;; projection is a runtime binding supplied by trusted config, so the
          ;; test JVM binds a stub tracker fn and needs neither devflow.spool nor
          ;; the workflow spool root on its classpath.
-         :extra-deps {io.skein/skein {:local/root "../skein-src"}}
+         :extra-deps {io.millstrand/millstrand {:local/root "../millstrand"}}
          :jvm-opts ["--enable-native-access=ALL-UNNAMED"]
          :main-opts ["-m" "ct.spools.kanban-test"]}
   :format {:extra-deps {dev.weavejester/cljfmt {:mvn/version "0.13.1"}}

@@ -66,7 +66,7 @@ async function resolveWorkspace(): Promise<string> {
   if (opts.workspace) return resolve(opts.workspace);
   const git = await run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], process.cwd());
   if (git.code !== 0) throw new Error(`cannot resolve canonical repo root: ${git.err.trim()}`);
-  return resolve(dirname(git.out.trim()), ".skein");
+  return resolve(dirname(git.out.trim()), ".millstrand");
 }
 
 const workspace = await resolveWorkspace();

@@ -1,11 +1,11 @@
 # kanban.spool
 
 `ct.spools.kanban` provides the user-facing kanban work board for
-[Skein](https://github.com/codethread/skein) as a git-distributed spool:
+[Millstrand](https://github.com/codethread/millstrand) as a git-distributed spool:
 feature/epic cards, refinement/pending/claimed/in_review lanes, a derived-status
 task tier, notes, free-form labels, and the `strand kanban` CLI op.
 
-It is trusted Clojure code for a live Skein weaver. The spool has no
+It is trusted Clojure code for a live Millstrand weaver. The spool has no
 `spool.edn` manifest; consumption is the manifest-free contract: approve source
 in `spools.edn` or `spools.local.edn`, then declare the module explicitly from
 trusted startup or REPL code.
@@ -24,7 +24,7 @@ The `kanban-dash` bin provides an interactive terminal board with epic and featu
 
 ## Prerequisites
 
-- A Skein checkout/runtime at commit `60e80c5d0d3c3b80f8e60ec9a510fc660669b07d` or a descendant. That commit adds the `defbin` form and `mill bin` commands used by `kanban-dash`. No Skein release marker contains that floor yet, so this requirement cannot yet be expressed as `:skein/min`.
+- A Millstrand checkout/runtime at commit `60e80c5d0d3c3b80f8e60ec9a510fc660669b07d` or a descendant. That commit adds the `defbin` form and `mill bin` commands used by `kanban-dash`. No Millstrand release marker contains that floor yet, so this requirement cannot yet be expressed as `:millstrand/min`.
 - A live weaver configured from a workspace you control.
 - A 40-hex git SHA pin for this repository, or a local checkout approved through
   `spools.local.edn` for development.
@@ -58,8 +58,8 @@ encoded in a manifest.
 The consumer owns the runtime and declares kanban explicitly from trusted `init.clj` or REPL code. The declaration names a source target and world policy only. Static authoring forms in [`src/ct/spools/kanban.clj`](./src/ct/spools/kanban.clj) publish the complete operation, pattern, and query partitions; a named lifecycle resource owns vocabulary and runtime-state setup. Kanban has no prerequisite module:
 
 ```clojure
-(require '[skein.api.current.alpha :as current]
-         '[skein.api.runtime.alpha :as runtime])
+(require '[millstrand.api.current.alpha :as current]
+         '[millstrand.api.runtime.alpha :as runtime])
 
 (def runtime (current/runtime))
 
@@ -79,7 +79,7 @@ the same functions.
 
 ## Development
 
-Tests run standalone against a sibling Skein checkout (see the `:test` alias
+Tests run standalone against a sibling Millstrand checkout (see the `:test` alias
 in [deps.edn](./deps.edn) for the exact root):
 
 ```sh

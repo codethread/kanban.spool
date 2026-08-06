@@ -1,5 +1,5 @@
 (ns ct.spools.kanban
-  "User-facing kanban board over Skein strands.
+  "User-facing kanban board over Millstrand strands.
 
   Cards are the user<->agent tracking surface: everything a user asks for is a
   `feature` card (occasionally grouped under an `epic`), and every agent
@@ -19,15 +19,15 @@
   `latest-note`."
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
-            [skein.api.notes.alpha :as notes]
-            [skein.api.graph.alpha :as graph]
-            [skein.api.lifecycle.alpha :as lifecycle]
-            [skein.api.vocab.alpha :as vocab]
-            [skein.api.weaver.alpha :as weaver]
-            [skein.api.format.alpha :as fmt]
-            [skein.api.runtime.alpha :as runtime]
-            [skein.api.skein.alpha :as skein]
-            [skein.api.spool.alpha :refer [attr-get entity-projection]]))
+            [millstrand.api.notes.alpha :as notes]
+            [millstrand.api.graph.alpha :as graph]
+            [millstrand.api.lifecycle.alpha :as lifecycle]
+            [millstrand.api.vocab.alpha :as vocab]
+            [millstrand.api.weaver.alpha :as weaver]
+            [millstrand.api.format.alpha :as fmt]
+            [millstrand.api.runtime.alpha :as runtime]
+            [millstrand.api.millstrand.alpha :as millstrand]
+            [millstrand.api.spool.alpha :refer [attr-get entity-projection]]))
 
 (def ^:private card-attr :kanban/card)
 (def ^:private lane-attr :kanban/lane)
@@ -76,7 +76,7 @@
 
 (defn- attr-value
   "Return a strand attribute by keyword or string key, via the shared spool-tier
-  tolerant reader (`skein.api.spool.alpha/attr-get`)."
+  tolerant reader (`millstrand.api.spool.alpha/attr-get`)."
   [strand k]
   (attr-get strand k))
 
@@ -275,7 +275,7 @@
   (symbol key))
 
 #_{:clj-kondo/ignore [:unresolved-symbol]}
-(skein/defpattern kanban-batch
+(millstrand/defpattern kanban-batch
   "Create pending feature cards with bodies and depends-on edges.
 
   Input shape: {:items [{:key \"slug\" :title \"Title\" :body \"optional\"
@@ -770,7 +770,7 @@
 (defn note!
   "Append a note to a card or task via the blessed notes relation.
 
-  The note rides the shared `notes` edge (`skein.api.notes.alpha/note!`) with
+  The note rides the shared `notes` edge (`millstrand.api.notes.alpha/note!`) with
   optional inherited `note/by` attribution and the kanban-owned
   `note/kind` view hint, so concurrent agents never race a
   read-merge-write cycle and every note keeps its own timestamp and attribution. Note the doing-task as you go — that is
@@ -1546,7 +1546,7 @@
 (def ^:private kanban-vocab
   {:kind :attr-namespace
    :name "kanban"
-   :owner :skein/spools-kanban
+   :owner :millstrand/spools-kanban
    :keys ["kanban/card" "kanban/lane" "kanban/outcome" "kanban/type"
           "kanban/priority" "kanban/source" "kanban/task"
           "kanban/run-id" "kanban/from" "kanban/abandon-restore-lane"]
@@ -1557,7 +1557,7 @@
   ;; keys in use are whatever the board's cards carry (`kanban label list`).
   {:kind :attr-namespace
    :name label-ns
-   :owner :skein/spools-kanban
+   :owner :millstrand/spools-kanban
    :doc "Open per-label marker keys: `kanban.label/<slug>` is \"true\" on every card carrying <slug>."})
 
 (def ^:private kanban-op-options
@@ -1569,33 +1569,33 @@
    :returns kanban-export-returns})
 
 #_{:clj-kondo/ignore [:unresolved-symbol]}
-(skein/defop kanban
+(millstrand/defop kanban
   "Manage the user-facing kanban work board."
   kanban-op-options
   [ctx]
   (dispatch-kanban-op ctx))
 
 #_{:clj-kondo/ignore [:unresolved-symbol]}
-(skein/defop kanban-export
+(millstrand/defop kanban-export
   "Return a card's full parent-of subtree with its internal depends-on edges."
   kanban-export-op-options
   [ctx]
   (export-card-op ctx))
 
 #_{:clj-kondo/ignore [:unresolved-symbol]}
-(skein/defbin kanban-dash
+(millstrand/defbin kanban-dash
   "Open the interactive Kanban board in the caller's terminal."
   {:executable [:family "bin/kanban-dash"]
    :build ["go" "build" "-C" "scripts/agent-dash" "-o" "kanban-dash" "."]})
 
 #_{:clj-kondo/ignore [:unresolved-symbol]}
-(skein/defquery kanban-cards
+(millstrand/defquery kanban-cards
   "Select every Kanban card strand."
   {}
   [:= [:attr "kanban/card"] "true"])
 
 #_{:clj-kondo/ignore [:unresolved-symbol]}
-(skein/defquery kanban-pending
+(millstrand/defquery kanban-pending
   "Select active Kanban cards in the pending lane."
   {}
   [:and [:= :state "active"]
@@ -1603,7 +1603,7 @@
    [:= [:attr "kanban/lane"] "pending"]])
 
 #_{:clj-kondo/ignore [:unresolved-symbol]}
-(skein/defquery kanban-epic-pending
+(millstrand/defquery kanban-epic-pending
   "Select active pending cards hanging directly under one epic."
   {:usage "strand ready --query kanban-epic-pending --param epic=<id>"}
   {:params [:epic]

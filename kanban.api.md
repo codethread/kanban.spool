@@ -3,7 +3,7 @@
 # <a name="ct.spools.kanban">ct.spools.kanban</a>
 
 
-User-facing kanban board over Skein strands.
+User-facing kanban board over Millstrand strands.
 
   Cards are the user<->agent tracking surface: everything a user asks for is a
   `feature` card (occasionally grouped under an `epic`), and every agent
@@ -197,7 +197,7 @@ Function.
 
 Append a note to a card or task via the blessed notes relation.
 
-  The note rides the shared `notes` edge (`skein.api.notes.alpha/note!`) with
+  The note rides the shared `notes` edge (`millstrand.api.notes.alpha/note!`) with
   optional inherited `note/by` attribution and the kanban-owned
   `note/kind` view hint, so concurrent agents never race a
   read-merge-write cycle and every note keeps its own timestamp and attribution. Note the doing-task as you go — that is

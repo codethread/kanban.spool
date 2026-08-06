@@ -1,4 +1,4 @@
-# Skein Kanban Spool — Cookbook
+# Millstrand Kanban Spool — Cookbook
 
 Composition recipes for `ct.spools.kanban`: how to run real user↔agent work through the board, and *why* each stamp, edge, and note is where it is.
 
@@ -382,12 +382,12 @@ Honest source: `needs-review-entries` / `board` in the spool source, the `:stayi
 **Composition.** Turn on peering in both repos (Guild + Kanban + the peering module), name each weaver, then `kanban-peers` to find the target and `kanban-send` to hand the card over. The board tier travels; tasks, notes, and claims stay home.
 
 ```clojure
-;; In BOTH repos: .skein/spools.edn approves guild alongside kanban.
-{:spools {skein.spools/guild {:local/root "/path/to/your/skein/spools/guild"}
+;; In BOTH repos: .millstrand/spools.edn approves guild alongside kanban.
+{:spools {millstrand.spools/guild {:local/root "/path/to/your/millstrand/spools/guild"}
           codethread/kanban {:local/root "/path/to/kanban.spool"}}}
 ```
 
-In BOTH repos, `.skein/config.json` publishes a portable weaver name — set
+In BOTH repos, `.millstrand/config.json` publishes a portable weaver name — set
 `name` to `"backend"` in one repo and `"frontend"` in the other:
 
 ```json
@@ -395,21 +395,21 @@ In BOTH repos, `.skein/config.json` publishes a portable weaver name — set
 ```
 
 ```clojure
-;; In BOTH repos: .skein/init.clj activates guild, then kanban, then peering.
-;; Requires Skein commit 343f886880092bc38ed3e0522eca2d95a7cf04bc or a
-;; descendant; no Skein release marker contains this convention floor yet.
-(require '[skein.api.current.alpha :as current]
-         '[skein.api.runtime.alpha :as runtime])
+;; In BOTH repos: .millstrand/init.clj activates guild, then kanban, then peering.
+;; Requires Millstrand commit 343f886880092bc38ed3e0522eca2d95a7cf04bc or a
+;; descendant; no Millstrand release marker contains this convention floor yet.
+(require '[millstrand.api.current.alpha :as current]
+         '[millstrand.api.runtime.alpha :as runtime])
 
 (def runtime (current/runtime))
 (runtime/module! runtime :guild
-  {:ns 'skein.spools.guild :spools ['skein.spools/guild]
+  {:ns 'millstrand.spools.guild :spools ['millstrand.spools/guild]
    :required? true})
 (runtime/module! runtime :kanban
   {:ns 'ct.spools.kanban :spools ['codethread/kanban]
    :required? true})
 (runtime/module! runtime :kanban/peering
-  {:ns 'ct.spools.kanban.peering :spools ['codethread/kanban 'skein.spools/guild]
+  {:ns 'ct.spools.kanban.peering :spools ['codethread/kanban 'millstrand.spools/guild]
    :after [:guild :kanban]
    :required? true})
 ```
@@ -430,7 +430,7 @@ strand kanban-send frontend "$card"
 **Why this shape.**
 
 - **Guild is approved like any other spool.** Peering's receive op is a guild op,
-  so the consuming workspace approves `skein.spools/guild` in `spools.edn` and
+  so the consuming workspace approves `millstrand.spools/guild` in `spools.edn` and
   syncs it exactly as it approves kanban — there is no separate install path and
   no classpath magic. Approving both lets the peering lifecycle register its
   receiver through Guild at activation (contract [Peering](./kanban.md#peering);
@@ -443,7 +443,7 @@ strand kanban-send frontend "$card"
 - **The name is the provenance, so it is mandatory.** Every sent card is stamped
   `kanban/from` `"<board>:<card>"`, which needs the sending weaver's published
   name. A nameless weaver refuses to send rather than stamp a blank origin — set
-  `name` in `.skein/config.json` (`send-requires-a-named-runtime`).
+  `name` in `.millstrand/config.json` (`send-requires-a-named-runtime`).
 - **Only queued work travels, and the source is left alone.** `kanban-send`
   refuses a claimed, in-review, or closed card with its lane in the error, and an
   epic refuses while any child is in-flight — in-flight and finished work is
