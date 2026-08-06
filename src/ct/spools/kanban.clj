@@ -771,10 +771,10 @@
   "Append a note to a card or task via the blessed notes relation.
 
   The note rides the shared `notes` edge (`millstrand.api.notes.alpha/note!`) with
-  optional inherited `note/by` attribution and the kanban-owned
-  `note/kind` view hint, so concurrent agents never race a
-  read-merge-write cycle and every note keeps its own timestamp and attribution. Note the doing-task as you go — that is
-  what `kanban card <id>` surfaces as each task's `:latest-note` — and keep
+  optional inherited `note/by` attribution and the kanban-owned `note/kind` view
+  hint, so concurrent agents never race a read-merge-write cycle. Every note
+  keeps its own timestamp and attribution. Note the doing-task as you go — that
+  is what `kanban card <id>` surfaces as each task's `:latest-note` — and keep
   card notes to lean handover summaries. `--kind` stamps the open `note/kind`
   view hint (blessed values: activity, decision, review-dump, summary). A
   task note reports its owning card alongside the task when one parents it."

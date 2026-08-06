@@ -1,24 +1,12 @@
 # kanban.spool
 
-`ct.spools.kanban` provides the user-facing kanban work board for
-[Millstrand](https://github.com/codethread/millstrand) as a git-distributed spool:
-feature/epic cards, refinement/pending/claimed/in_review lanes, a derived-status
-task tier, notes, free-form labels, and the `strand kanban` CLI op.
+`ct.spools.kanban` provides the user-facing kanban work board for [Millstrand](https://github.com/codethread/millstrand) as a git-distributed spool: feature/epic cards, refinement/pending/claimed/in_review lanes, a derived-status task tier, notes, free-form labels, and the `strand kanban` CLI op.
 
-It is trusted Clojure code for a live Millstrand weaver. The spool has no
-`spool.edn` manifest; consumption is the manifest-free contract: approve source
-in `spools.edn` or `spools.local.edn`, then declare the module explicitly from
-trusted startup or REPL code.
+It is trusted Clojure code for a live Millstrand weaver. The spool has no `spool.edn` manifest; consumption is the manifest-free contract: approve source in `spools.edn` or `spools.local.edn`, then declare the module explicitly from trusted startup or REPL code.
 
-The board contract lives in [kanban.md](./kanban.md); worked composition
-recipes live in [kanban.cookbook.md](./kanban.cookbook.md). At runtime,
-`strand kanban prime` is the agent-facing working discipline and
-`strand kanban about` the terse command manual — both authored in the spool, so
-they cannot drift from the installed surface.
+The board contract lives in [kanban.md](./kanban.md); worked composition recipes live in [kanban.cookbook.md](./kanban.cookbook.md). At runtime, `strand kanban prime` is the agent-facing working discipline and `strand kanban about` the terse command manual — both authored in the spool, so they cannot drift from the installed surface.
 
-`kanban-export` plus the Bun renderer in [scripts/kanban-export](./scripts/kanban-export)
-render a card's subtree to a standalone HTML file offline (see kanban.md's
-[Offline export](./kanban.md#offline-export) section).
+`kanban-export` plus the Bun renderer in [scripts/kanban-export](./scripts/kanban-export) render a card's subtree to a standalone HTML file offline (see kanban.md's [Offline export](./kanban.md#offline-export) section).
 
 The `kanban-dash` bin provides an interactive terminal board with epic and feature views, label filters, saved per-workspace views, and keyboard-driven navigation.
 
@@ -33,8 +21,7 @@ Kanban core has no spool prerequisites or Maven dependencies of its own.
 
 ## Dependency information
 
-Approve every source spool explicitly; no prerequisite is fetched
-transitively. Kanban itself needs only its own coordinate.
+Approve every source spool explicitly; no prerequisite is fetched transitively. Kanban itself needs only its own coordinate.
 
 Shared workspace example:
 
@@ -49,9 +36,7 @@ Local development overlay example (`spools.local.edn`, usually gitignored):
 {:spools {codethread/kanban {:local/root "/Users/you/dev/kanban.spool"}}}
 ```
 
-Do not copy a `spool.edn`; this repository intentionally does not ship one.
-Metadata, prerequisites, and activation order are documented here rather than
-encoded in a manifest.
+Do not copy a `spool.edn`; this repository intentionally does not ship one. Metadata, prerequisites, and activation order are documented here rather than encoded in a manifest.
 
 ## Activation
 
@@ -79,9 +64,12 @@ the same functions.
 
 ## Development
 
-Tests run standalone against a sibling Millstrand checkout (see the `:test` alias
-in [deps.edn](./deps.edn) for the exact root):
+Tests run standalone against a sibling Millstrand checkout (see the `:test` alias in [deps.edn](./deps.edn) for the exact root):
 
 ```sh
 clojure -M:test
 ```
+
+## Release validation
+
+`bin/identity-check` is the CI gate for active legacy product names. `bin/verify-release` validates the SHA-only core release input, loads Kanban in a clean consumer, and proves that `.millstrand` and `.ms` select the same database. Run candidate proof before landing and published proof only after the annotated Kanban marker exists; the exact commands and required inputs are in [release-exception.md](./release-exception.md).
