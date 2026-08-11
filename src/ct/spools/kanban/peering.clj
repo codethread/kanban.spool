@@ -671,8 +671,9 @@
            {:missing "guild" :registered-ops (mapv :name (weaver/ops rt))
             :remedy (fmt/reflow "
                      |Activate the guild module with
-                     |(runtime/module! runtime :guild {:ns 'millstrand.spools.guild
-                     |:spools ['millstrand.spools/guild] :required? true}) before
+                     |(runtime/module! runtime :skein/examples-guild
+                     |{:ns 'skein.examples.guild :spools ['skein.examples/guild]
+                     |:required? true}) before
                      |activating the kanban peering module.")}))
   (when-not (op-registered? rt "kanban")
     (fail! "kanban peering activation requires the kanban module to be active first"
@@ -700,7 +701,7 @@
 (defn open-peering!
   "Register the guarded `kanban.send.v1` receiver through Guild's supported seam."
   [{:keys [runtime]}]
-  (let [guild-register-op! (requiring-resolve 'millstrand.spools.guild/register-op!)]
+  (let [guild-register-op! (requiring-resolve 'skein.examples.guild/register-op!)]
     (require-peering-prerequisites! runtime)
     (guild-register-op! runtime 'kanban.send.v1
                         {:doc "Receive a peered kanban card or epic bundle onto this board."

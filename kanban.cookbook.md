@@ -383,7 +383,7 @@ Honest source: `needs-review-entries` / `board` in the spool source, the `:stayi
 
 ```clojure
 ;; In BOTH repos: .millstrand/spools.edn approves guild alongside kanban.
-{:spools {millstrand.spools/guild {:local/root "/path/to/your/millstrand/spools/guild"}
+{:spools {skein.examples/guild {:millstrand/source-root "examples/guild"}
           codethread/kanban {:local/root "/path/to/kanban.spool"}}}
 ```
 
@@ -395,21 +395,21 @@ In BOTH repos, `.millstrand/config.json` publishes a portable weaver name — se
 
 ```clojure
 ;; In BOTH repos: .millstrand/init.clj activates guild, then kanban, then peering.
-;; Requires Millstrand commit 343f886880092bc38ed3e0522eca2d95a7cf04bc or a
-;; descendant; no Millstrand release marker contains this convention floor yet.
+;; Requires Millstrand commit fb6c9057 or a descendant.
 (require '[millstrand.api.current.alpha :as current]
          '[millstrand.api.runtime.alpha :as runtime])
 
 (def runtime (current/runtime))
-(runtime/module! runtime :guild
-  {:ns 'millstrand.spools.guild :spools ['millstrand.spools/guild]
+(runtime/module! runtime :skein/examples-guild
+  {:ns 'skein.examples.guild :spools ['skein.examples/guild]
    :required? true})
 (runtime/module! runtime :kanban
   {:ns 'ct.spools.kanban :spools ['codethread/kanban]
+   :after [:skein/examples-guild]
    :required? true})
 (runtime/module! runtime :kanban/peering
-  {:ns 'ct.spools.kanban.peering :spools ['codethread/kanban 'millstrand.spools/guild]
-   :after [:guild :kanban]
+  {:ns 'ct.spools.kanban.peering :spools ['codethread/kanban 'skein.examples/guild]
+   :after [:skein/examples-guild :kanban]
    :required? true})
 ```
 
@@ -428,8 +428,8 @@ strand kanban-send frontend "$card"
 
 **Why this shape.**
 
-- **Guild is approved like any other spool.** Peering's receive op is a guild op, so the consuming workspace approves `millstrand.spools/guild` in `spools.edn` and syncs it exactly as it approves kanban — there is no separate install path and no classpath magic. Approving both lets the peering lifecycle register its receiver through Guild at activation (contract [Peering](./kanban.md#peering); `peering-lifecycle-requires-guild-first` in `kanban_peering_test.clj`).
-- **Activation order is a hard prerequisite.** The peering lifecycle fails loudly if Guild or the Kanban board op is not already registered, so the `:after [:guild :kanban]` guard is correctness, not taste — a reordered init.clj surfaces the problem at startup instead of at the first send (`peering-lifecycle-requires-guild-first`/`-kanban-first`).
+- **Guild is approved like any other spool.** Peering's receive op is a Guild op, so the consuming workspace approves `skein.examples/guild` in `spools.edn` and syncs it exactly as it approves Kanban — there is no separate install path and no classpath magic. Approving both lets the peering lifecycle register its receiver through Guild at activation (contract [Peering](./kanban.md#peering); `peering-lifecycle-requires-guild-first` in `kanban_peering_test.clj`).
+- **Activation order is a hard prerequisite.** The peering lifecycle fails loudly if Guild or the Kanban board op is not already registered, so the `:after [:skein/examples-guild :kanban]` guard is correctness, not taste — a reordered init.clj surfaces the problem at startup instead of at the first send (`peering-lifecycle-requires-guild-first`/`-kanban-first`).
 - **The name is the provenance, so it is mandatory.** Every sent card is stamped `kanban/from` `"<board>:<card>"`, which needs the sending weaver's published name. A nameless weaver refuses to send rather than stamp a blank origin — set `name` in `.millstrand/config.json` (`send-requires-a-named-runtime`).
 - **Only queued work travels, and the source is left alone.** `kanban-send` refuses a claimed, in-review, or closed card with its lane in the error, and an epic refuses while any child is in-flight — in-flight and finished work is world-local. On success it *notes* the local card with the remote ids but never moves its lane, so closing the handed-over card stays your explicit choice (`send-refuses-in-flight-and-finished-cards`, `send-invokes-the-peer-and-notes-the-local-card`).
 - **The received card is a fresh local card.** It lands through the target's own `add!` path, takes the target's ids and defaults, and carries only the `kanban/from` stamp back to its origin — no tasks, notes, or claims cross, so the two boards never entangle their execution or history (contract [Peering](./kanban.md#peering); the receive tests in `kanban_peering_test.clj`).
