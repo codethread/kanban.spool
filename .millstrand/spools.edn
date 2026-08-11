@@ -1,5 +1,5 @@
 {:spools {millstrand.spools/batteries {:millstrand/source-root "spools/batteries"}
-          millstrand.spools/guild {:millstrand/source-root "spools/guild"}
+          skein.examples/guild {:millstrand/source-root "examples/guild"}
           ;; intentional dev-world self-coordinate, matching devflow: this
           ;; repo's board always loads kanban from the enclosing checkout
           codethread/kanban {:local/root ".."}}}

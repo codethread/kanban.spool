@@ -34,12 +34,12 @@ for ns in $nss; do
 done
 
 # The frozen suite loads against io.millstrand/millstrand (and its transitive
-# clojure.data.json) plus the guild spool source — the deps the :test alias in
+# clojure.data.json) plus the Guild example source — the deps the :test alias in
 # deps.edn supplies. compat-alarm can't just run -M:test because it swaps the
 # working tree's tests for the archived tag's, so it mirrors the :test alias's
 # sibling-checkout coordinates onto this base-only classpath.
 millstrand_root="../millstrand"
-guild_src="$millstrand_root/spools/guild/src"
+guild_src="$millstrand_root/examples/guild/src"
 
 exec clojure -Sdeps "{:paths [${src_paths}${test_paths}\"$guild_src\"]
                       :deps {io.millstrand/millstrand {:local/root \"$millstrand_root\"}}}" -M -e "

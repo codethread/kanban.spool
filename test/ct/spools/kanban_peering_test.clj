@@ -8,7 +8,7 @@
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [millstrand.spools.guild]
+            [skein.examples.guild]
             [millstrand.api.graph.alpha :as graph]
             [millstrand.api.runtime.alpha :as runtime]
             [millstrand.api.weaver.alpha :as weaver]
@@ -51,12 +51,14 @@
   record before later modules use its runtime-owned dispatch API. Throws with
   the refresh result unless the module applied."
   [rt]
-  (let [result (runtime/module! rt :guild
-                                {:ns 'millstrand.spools.guild})
-        status (get-in result [:modules :guild :status])]
+  (let [result (runtime/module! rt :skein/examples-guild
+                                {:ns 'skein.examples.guild})
+        status (get-in result [:modules :skein/examples-guild :status])]
     (when-not (contains? #{:applied :unchanged} status)
       (throw (ex-info "guild module activation failed"
-                      {:module/key :guild :module/status status :result result})))))
+                      {:module/key :skein/examples-guild
+                       :module/status status
+                       :result result})))))
 
 (defn- activate-kanban!
   "Activate the forms-only kanban module from source."
@@ -73,7 +75,7 @@
   [rt]
   (let [result (runtime/module! rt :kanban/peering
                                 {:ns 'ct.spools.kanban.peering
-                                 :after [:guild :kanban]})
+                                 :after [:skein/examples-guild :kanban]})
         status (get-in result [:modules :kanban/peering :status])]
     (when-not (contains? #{:applied :unchanged} status)
       (throw (ex-info "kanban peering module activation failed"
@@ -110,8 +112,8 @@
                                      (peering/open-peering! {:runtime rt})))
             remedy (:remedy (ex-data ex))]
         (is (= "guild" (:missing (ex-data ex))))
-        (is (str/includes? remedy "millstrand.spools.guild"))
-        (is (str/includes? remedy "millstrand.spools/guild"))))))
+        (is (str/includes? remedy "skein.examples.guild"))
+        (is (str/includes? remedy "skein.examples/guild"))))))
 
 (deftest peering-owner-surface-covers-both-local-ops
   ;; The receive operation remains Guild's dispatch-table declaration; these
@@ -174,7 +176,7 @@
             image-result (runtime/module! rt :kanban/peering
                                           {:ns 'ct.spools.kanban.peering
                                            :load :image
-                                           :after [:guild :kanban]})
+                                           :after [:skein/examples-guild :kanban]})
             image-ops (peering-ops rt)]
         (is (= :loaded
                (get-in source-result
@@ -198,15 +200,15 @@
              "(def runtime (current/runtime))\n")
         guild-and-kanban
         (str preamble
-             "(runtime/module! runtime :guild\n"
-             "  {:ns 'millstrand.spools.guild})\n"
+             "(runtime/module! runtime :skein/examples-guild\n"
+             "  {:ns 'skein.examples.guild})\n"
              "(runtime/module! runtime :kanban\n"
-             "  {:ns 'ct.spools.kanban :after [:guild]})\n")
+             "  {:ns 'ct.spools.kanban :after [:skein/examples-guild]})\n")
         with-peering-init
         (str guild-and-kanban
              "(runtime/module! runtime :kanban/peering\n"
              "  {:ns 'ct.spools.kanban.peering\n"
-             "   :after [:guild :kanban]})\n")]
+             "   :after [:skein/examples-guild :kanban]})\n")]
     (t/run-with-weaver-world
      {:storage :sqlite-memory
       :init with-peering-init}

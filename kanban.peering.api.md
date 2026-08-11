@@ -60,7 +60,33 @@ Close peering's module resource without claiming Guild's dispatch-table teardown
   baseline. Its own lifecycle reset removes receivers; this close therefore
   preserves the established process-lifetime receiver behavior while static
   peering operations retract with their module owner.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L717-L725">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L716-L724">Source</a></sub></p>
+
+## <a name="ct.spools.kanban.peering/kanban-peering-receiver">`kanban-peering-receiver`</a>
+
+
+
+
+Own guarded Guild receiver registration for the peering module lifetime.
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L726-L729">Source</a></sub></p>
+
+## <a name="ct.spools.kanban.peering/kanban-peers-op">`kanban-peers-op`</a>
+``` clojure
+(kanban-peers-op ctx)
+```
+Function.
+
+List sibling weavers and whether each accepts peered kanban cards.
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L687-L692">Source</a></sub></p>
+
+## <a name="ct.spools.kanban.peering/kanban-send-op">`kanban-send-op`</a>
+``` clojure
+(kanban-send-op ctx)
+```
+Function.
+
+Send a pending or refinement card (or epic bundle) to a sibling weaver's board.
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L694-L699">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban.peering/open-peering!">`open-peering!`</a>
 ``` clojure
@@ -69,7 +95,7 @@ Close peering's module resource without claiming Guild's dispatch-table teardown
 Function.
 
 Register the guarded `kanban.send.v1` receiver through Guild's supported seam.
-<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L702-L715">Source</a></sub></p>
+<p><sub><a href="https://github.com/codethread/kanban.spool/blob/main/src/ct/spools/kanban/peering.clj#L701-L714">Source</a></sub></p>
 
 ## <a name="ct.spools.kanban.peering/send-op">`send-op`</a>
 ``` clojure

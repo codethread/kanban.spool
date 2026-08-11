@@ -671,8 +671,9 @@
            {:missing "guild" :registered-ops (mapv :name (weaver/ops rt))
             :remedy (fmt/reflow "
                      |Activate the guild module with
-                     |(runtime/module! runtime :guild {:ns 'millstrand.spools.guild
-                     |:spools ['millstrand.spools/guild] :required? true}) before
+                     |(runtime/module! runtime :skein/examples-guild
+                     |{:ns 'skein.examples.guild :spools ['skein.examples/guild]
+                     |:required? true}) before
                      |activating the kanban peering module.")}))
   (when-not (op-registered? rt "kanban")
     (fail! "kanban peering activation requires the kanban module to be active first"
@@ -683,7 +684,6 @@
                      |:spools ['codethread/kanban] :required? true}) before
                      |activating the kanban peering module.")})))
 
-#_{:clj-kondo/ignore [:unresolved-symbol]}
 (millstrand/defop kanban-peers
   "List sibling weavers and whether each accepts peered kanban cards."
   {:arg-spec kanban-peers-arg-spec
@@ -691,7 +691,6 @@
   [ctx]
   (peers-result ctx))
 
-#_{:clj-kondo/ignore [:unresolved-symbol]}
 (millstrand/defop kanban-send
   "Send a pending or refinement card (or epic bundle) to a sibling weaver's board."
   {:arg-spec kanban-send-arg-spec
@@ -702,7 +701,7 @@
 (defn open-peering!
   "Register the guarded `kanban.send.v1` receiver through Guild's supported seam."
   [{:keys [runtime]}]
-  (let [guild-register-op! (requiring-resolve 'millstrand.spools.guild/register-op!)]
+  (let [guild-register-op! (requiring-resolve 'skein.examples.guild/register-op!)]
     (require-peering-prerequisites! runtime)
     (guild-register-op! runtime 'kanban.send.v1
                         {:doc "Receive a peered kanban card or epic bundle onto this board."
@@ -724,7 +723,6 @@
   [_context]
   {:closed :kanban-peering})
 
-#_{:clj-kondo/ignore [:unresolved-symbol]}
 (lifecycle/defresource kanban-peering-receiver
   "Own guarded Guild receiver registration for the peering module lifetime."
   {:open 'ct.spools.kanban.peering/open-peering!

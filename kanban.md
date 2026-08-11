@@ -226,11 +226,11 @@ Only queued work travels. A `claimed`, `in_review`, or closed card is in-flight 
 
 ### Loading
 
-Peering depends on the `millstrand.spools.guild` spool for its receive op and on `millstrand.api.peers.alpha` for discovery. `millstrand.spools.guild` loads like any other spool — through the consuming workspace's `spools.edn` approval plus a runtime sync — so a peering repo approves **both** guild and kanban:
+Peering depends on the `skein.examples.guild` example spool for its receive op and on `millstrand.api.peers.alpha` for discovery. `skein.examples.guild` loads like any other spool — through the consuming workspace's `spools.edn` approval plus a runtime sync — so a peering repo approves **both** Guild and Kanban:
 
 ```clojure
 ;; spools.edn (or spools.local.edn overlay)
-{:spools {millstrand.spools/guild {:local/root "/path/to/your/millstrand/spools/guild"}
+{:spools {skein.examples/guild {:millstrand/source-root "examples/guild"}
           codethread/kanban {:git/url "git@github.com:codethread/kanban.spool.git"
                              :git/sha "<40-hex-sha-for-the-approved-commit>"}}}
 ```
@@ -241,26 +241,27 @@ Peering stamps every card it sends with the local weaver's **published name**, s
 {"configFormat": "alpha", "name": "backend"}
 ```
 
-Then declare the modules in order: guild first, kanban second, peering last. These forms-only declarations require Millstrand commit `24f900464d9b26e8e3d81550eef3a06230de5395` or a descendant; no Millstrand release marker contains that floor yet. The peering lifecycle fails loudly if Guild or the Kanban board op is not already registered, so the `:after` ordering is a hard prerequisite, not a preference:
+Then declare the modules in order: Guild first, Kanban second, peering last. These forms-only declarations require Millstrand commit `fb6c9057` or a descendant. The peering lifecycle fails loudly if Guild or the Kanban board op is not already registered, so the `:after` ordering is a hard prerequisite, not a preference:
 
 ```clojure
 (runtime/module! runtime
-  :guild
-  {:ns 'millstrand.spools.guild
-   :spools ['millstrand.spools/guild]
+  :skein/examples-guild
+  {:ns 'skein.examples.guild
+   :spools ['skein.examples/guild]
    :required? true})
 
 (runtime/module! runtime
   :kanban
   {:ns 'ct.spools.kanban
    :spools ['codethread/kanban]
+   :after [:skein/examples-guild]
    :required? true})
 
 (runtime/module! runtime
   :kanban/peering
   {:ns 'ct.spools.kanban.peering
-   :spools ['codethread/kanban 'millstrand.spools/guild]
-   :after [:guild :kanban]
+   :spools ['codethread/kanban 'skein.examples/guild]
+   :after [:skein/examples-guild :kanban]
    :required? true})
 ```
 

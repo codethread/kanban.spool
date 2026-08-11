@@ -3,8 +3,8 @@
 
 (def runtime (current/runtime))
 
-;; Requires Millstrand commit 24f900464d9b26e8e3d81550eef3a06230de5395 or a
-;; descendant. Each declaration names a source target and world policy only;
+;; Requires Millstrand commit fb6c9057 or a descendant. Each declaration names
+;; a source target and world policy only;
 ;; static contribution and lifecycle forms in the target namespace provide its
 ;; complete owner partition.
 
@@ -17,19 +17,19 @@
 ;; Board peering (kanban.md "Peering"): guild first, kanban second, peering
 ;; last — its lifecycle resource fails loudly unless both predecessors are
 ;; active.
-(runtime/module! runtime :guild
-  {:ns 'millstrand.spools.guild
-   :spools ['millstrand.spools/guild]
+(runtime/module! runtime :skein/examples-guild
+  {:ns 'skein.examples.guild
+   :spools ['skein.examples/guild]
    :required? true})
 
 (runtime/module! runtime :kanban
   {:ns 'ct.spools.kanban
    :spools ['codethread/kanban]
-   :after [:guild]
+   :after [:skein/examples-guild]
    :required? true})
 
 (runtime/module! runtime :kanban/peering
   {:ns 'ct.spools.kanban.peering
-   :spools ['codethread/kanban 'millstrand.spools/guild]
-   :after [:guild :kanban]
+   :spools ['codethread/kanban 'skein.examples/guild]
+   :after [:skein/examples-guild :kanban]
    :required? true})

@@ -274,7 +274,6 @@
   [key]
   (symbol key))
 
-#_{:clj-kondo/ignore [:unresolved-symbol]}
 (millstrand/defpattern kanban-batch
   "Create pending feature cards with bodies and depends-on edges.
 
@@ -1568,33 +1567,28 @@
   {:arg-spec kanban-export-arg-spec
    :returns kanban-export-returns})
 
-#_{:clj-kondo/ignore [:unresolved-symbol]}
 (millstrand/defop kanban
   "Manage the user-facing kanban work board."
   kanban-op-options
   [ctx]
   (dispatch-kanban-op ctx))
 
-#_{:clj-kondo/ignore [:unresolved-symbol]}
 (millstrand/defop kanban-export
   "Return a card's full parent-of subtree with its internal depends-on edges."
   kanban-export-op-options
   [ctx]
   (export-card-op ctx))
 
-#_{:clj-kondo/ignore [:unresolved-symbol]}
 (millstrand/defbin kanban-dash
   "Open the interactive Kanban board in the caller's terminal."
   {:executable [:family "bin/kanban-dash"]
    :build ["go" "build" "-C" "scripts/agent-dash" "-o" "kanban-dash" "."]})
 
-#_{:clj-kondo/ignore [:unresolved-symbol]}
 (millstrand/defquery kanban-cards
   "Select every Kanban card strand."
   {}
   [:= [:attr "kanban/card"] "true"])
 
-#_{:clj-kondo/ignore [:unresolved-symbol]}
 (millstrand/defquery kanban-pending
   "Select active Kanban cards in the pending lane."
   {}
@@ -1602,7 +1596,6 @@
    [:= [:attr "kanban/card"] "true"]
    [:= [:attr "kanban/lane"] "pending"]])
 
-#_{:clj-kondo/ignore [:unresolved-symbol]}
 (millstrand/defquery kanban-epic-pending
   "Select active pending cards hanging directly under one epic."
   {:usage "strand ready --query kanban-epic-pending --param epic=<id>"}
@@ -1625,7 +1618,6 @@
   [_context]
   {:closed :kanban})
 
-#_{:clj-kondo/ignore [:unresolved-symbol]}
 (lifecycle/defresource kanban-runtime
   "Own Kanban vocabulary and runtime-state setup for the module lifetime."
   {:open 'ct.spools.kanban/open-kanban!
