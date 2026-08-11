@@ -683,7 +683,6 @@
                      |:spools ['codethread/kanban] :required? true}) before
                      |activating the kanban peering module.")})))
 
-#_{:clj-kondo/ignore [:unresolved-symbol]}
 (millstrand/defop kanban-peers
   "List sibling weavers and whether each accepts peered kanban cards."
   {:arg-spec kanban-peers-arg-spec
@@ -691,7 +690,6 @@
   [ctx]
   (peers-result ctx))
 
-#_{:clj-kondo/ignore [:unresolved-symbol]}
 (millstrand/defop kanban-send
   "Send a pending or refinement card (or epic bundle) to a sibling weaver's board."
   {:arg-spec kanban-send-arg-spec
@@ -724,7 +722,6 @@
   [_context]
   {:closed :kanban-peering})
 
-#_{:clj-kondo/ignore [:unresolved-symbol]}
 (lifecycle/defresource kanban-peering-receiver
   "Own guarded Guild receiver registration for the peering module lifetime."
   {:open 'ct.spools.kanban.peering/open-peering!

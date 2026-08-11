@@ -1,0 +1,13 @@
+{:hooks
+ {:analyze-call
+  {millstrand.api.millstrand.alpha/defop hooks.millstrand/defop
+   millstrand.api.millstrand.alpha/defquery hooks.millstrand/defquery
+   millstrand.api.millstrand.alpha/defpattern hooks.millstrand/defpattern
+   millstrand.api.millstrand.alpha/defhook hooks.millstrand/defhook
+   millstrand.api.millstrand.alpha/defhandler hooks.millstrand/defhandler
+   millstrand.api.millstrand.alpha/defbin hooks.millstrand/defbin}}
+ :lint-as
+ {millstrand.api.lifecycle.alpha/defseed clojure.core/def
+  millstrand.api.lifecycle.alpha/defresource clojure.core/def
+  millstrand.api.lifecycle.alpha/defreconcile clojure.core/def
+  millstrand.test.alpha/with-weaver-world clojure.core/let}}
