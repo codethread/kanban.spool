@@ -1,22 +1,31 @@
 {:paths ["src"]
  :aliases
- {:test {:extra-paths ["test"]
-         ;; Point this at the Millstrand checkout you want to test against. This repo
-         ;; is developed beside millstrand, so the default works for local owner
-         ;; checkouts and CI layouts that place the repos as siblings.
-         ;;
-         ;; Kanban core carries no tracker dependency (RFC-022): the run
+ {:test {;; Kanban core carries no tracker dependency (RFC-022): the run
          ;; projection is a runtime binding supplied by trusted config, so the
-         ;; test JVM binds a stub tracker fn and needs neither devflow.spool nor
-         ;; the workflow spool root on its classpath.
-         :extra-deps {io.millstrand/millstrand {:local/root "../millstrand"}}
+         ;; test JVM binds a stub tracker fn.
+         :extra-paths ["test" ".millstrand"]
+         :extra-deps {io.millstrand/millstrand
+                      {:git/url "https://github.com/codethread/millstrand.git"
+                       :git/sha "3bbe5dc15359975a8e8203ef47b3a7514177e75b"}
+                      millstrand.spools/batteries
+                      {:git/url "https://github.com/codethread/millstrand.git"
+                       :git/sha "3bbe5dc15359975a8e8203ef47b3a7514177e75b"
+                       :deps/root "spools/batteries"}
+                      millhouse.spools/workflow
+                      {:git/url "https://github.com/codethread/millhouse.spool.git"
+                       :git/sha "c968e8bb083496cbdc2374def4f2c22347440806"
+                       :deps/root "spools/workflow"}
+                      millhouse.spools/millstrand-workflows
+                      {:git/url "https://github.com/codethread/millhouse.spool.git"
+                       :git/sha "c968e8bb083496cbdc2374def4f2c22347440806"
+                       :deps/root "spools/millstrand-workflows"}}
          :jvm-opts ["--enable-native-access=ALL-UNNAMED"]
          :main-opts ["-m" "ct.spools.kanban-test"]}
   :format {:extra-deps {dev.weavejester/cljfmt {:mvn/version "0.13.1"}}
-           :main-opts ["-m" "cljfmt.main" "check" "src" "test"]}
+           :main-opts ["-m" "cljfmt.main" "check" "src" "test" ".millstrand"]}
   :format/fix {:extra-deps {dev.weavejester/cljfmt {:mvn/version "0.13.1"}}
-               :main-opts ["-m" "cljfmt.main" "fix" "src" "test"]}
+               :main-opts ["-m" "cljfmt.main" "fix" "src" "test" ".millstrand"]}
   :lint/clj-kondo {:extra-deps {clj-kondo/clj-kondo {:mvn/version "2025.06.05"}}
-                   :main-opts ["-m" "clj-kondo.main" "--lint" "src" "test"]}
+                   :main-opts ["-m" "clj-kondo.main" "--lint" "src" "test" ".millstrand"]}
   :lint/splint {:extra-deps {io.github.noahtheduke/splint {:mvn/version "1.21.0"}}
-                :main-opts ["-m" "noahtheduke.splint" "--output" "clj-kondo" "src" "test"]}}}
+                :main-opts ["-m" "noahtheduke.splint" "--output" "clj-kondo" "src" "test" ".millstrand"]}}}

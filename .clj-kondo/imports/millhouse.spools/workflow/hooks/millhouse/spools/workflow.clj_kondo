@@ -1,0 +1,98 @@
+(ns hooks.millhouse.spools.workflow
+  "clj-kondo hooks for the Workflow spool's declaration macros."
+  (:require [clj-kondo.hooks-api :as api]))
+
+(def ^:private defexecutor-syntax
+  "(defexecutor name doc options argv & body)")
+
+(defn- node-sexpr [node received]
+  (when node
+    (try
+      (api/sexpr node)
+      (catch Exception error
+        (throw (ex-info "Unable to read workflow/defexecutor declaration"
+                        {:received received
+                         :value node
+                         :expected defexecutor-syntax}
+                        error))))))
+
+(defn- invalid-defexecutor! [received value]
+  (throw (ex-info (str "Invalid workflow/defexecutor declaration; received "
+                      (pr-str received) "; value " (pr-str value)
+                      "; expected " defexecutor-syntax)
+                  {:received received
+                   :value value
+                   :expected defexecutor-syntax})))
+
+(defn- validate-defexecutor-children [node]
+  (let [received (node-sexpr node nil)
+        children (:children node)
+        [form name doc opts argv & body] children
+        name-value (node-sexpr name received)
+        argv-value (node-sexpr argv received)]
+    (cond
+      (< (count children) 5)
+      (invalid-defexecutor! received (mapv #(node-sexpr % received) children))
+
+      (not (symbol? name-value))
+      (invalid-defexecutor! received name-value)
+
+      (not (vector? argv-value))
+      (invalid-defexecutor! received argv-value)
+
+      (empty? body)
+      (invalid-defexecutor! received body)
+
+      :else
+      {:form form
+       :name name
+       :name-value name-value
+       :doc doc
+       :opts opts
+       :argv argv
+       :body body})))
+
+(defn defworkflow
+  "Analyze `workflow/defworkflow` as a definition while retaining its body."
+  [{:keys [node]}]
+  (let [[form name doc opts definition] (:children node)
+        doc-node (if (string? (api/sexpr doc))
+                   doc
+                   (api/string-node "Computed workflow documentation."))
+        used (api/list-node
+              (list (api/token-node 'do)
+                    (api/list-node
+                     (list (api/token-node 'identity) form))
+                    (api/list-node
+                     (list (api/token-node 'identity) doc))
+                    (api/list-node
+                     (list (api/token-node 'identity) opts))
+                    definition))
+        def-node (api/list-node
+                  (list (api/token-node 'def) name doc-node used))]
+    {:node (with-meta def-node (meta node))}))
+
+(defn defexecutor
+  "Analyze `workflow/defexecutor` as a defn of its stalled? handler.
+
+  Keep the options expression in the analyzed tree so symbols in explicit
+  options remain checked, while presenting the generated handler as an
+  ordinary function to clj-kondo."
+  [{:keys [node]}]
+  (let [{:keys [form name name-value doc opts argv body]}
+        (validate-defexecutor-children node)
+        handler-node (with-meta
+                       (api/token-node
+                        (symbol (str name-value "-stalled?")))
+                       (meta name))
+        defn-node (api/list-node
+                   (list* (api/token-node 'defn)
+                          handler-node doc argv body))
+        used (api/list-node
+              (list (api/token-node 'do)
+                    (api/list-node
+                     (list (api/token-node 'identity) form))
+                    (api/list-node
+                     (list (api/token-node 'identity) opts))
+                    defn-node))]
+    {:node (with-meta used (meta node))}))

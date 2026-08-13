@@ -1,0 +1,9 @@
+{:lint-as
+ {millhouse.spools.workflow/defworkflow clojure.core/def
+  millhouse.spools.workflow/defexecutor clojure.core/def}
+ :hooks
+ {:analyze-call
+  {millhouse.spools.workflow/defworkflow
+   hooks.millhouse.spools.workflow/defworkflow
+   millhouse.spools.workflow/defexecutor
+   hooks.millhouse.spools.workflow/defexecutor}}}
