@@ -1,6 +1,1 @@
 # scope<TAB>pattern<TAB>reason
-.millstrand	.*skein.*	The approved Guild example is deliberately Skein-namespaced and configured as a Millstrand source-root dependency.
-src/ct/spools/kanban/peering.clj	.*skein.*	Kanban peering resolves the deliberately Skein-namespaced Guild example at its current source-root coordinate.
-test/ct/spools/kanban_peering_test.clj	.*skein.*	Peering tests exercise the deliberately Skein-namespaced Guild example implementation and activation key.
-kanban.md	.*skein.*	The peering contract documents the deliberately Skein-namespaced Guild example dependency and source-root coordinate.
-kanban.cookbook.md	.*skein.*	The peering cookbook documents the deliberately Skein-namespaced Guild example dependency and source-root coordinate.

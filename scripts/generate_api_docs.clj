@@ -12,12 +12,7 @@
 (def git-branch "main")
 
 (def api-docs
-  ;; Peering is a second published surface, not an implementation detail: its
-  ;; entry points are named from consumers' trusted config and its docstrings
-  ;; are the honest source for the three ops it registers, so it gets its own
-  ;; page rather than being folded into the board page.
-  [{:name "kanban" :source "src/ct/spools/kanban.clj" :outfile "kanban.api.md"}
-   {:name "kanban-peering" :source "src/ct/spools/kanban/peering.clj" :outfile "kanban.peering.api.md"}])
+  [{:name "kanban" :source "src/ct/spools/kanban.clj" :outfile "kanban.api.md"}])
 
 ;; ---------------------------------------------------------------------------
 

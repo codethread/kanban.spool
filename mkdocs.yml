@@ -51,4 +51,3 @@ nav:
   # Generated per-var reference; the behavior contract remains kanban.md above.
   - API:
       - ct.spools.kanban: kanban.api.md
-      - ct.spools.kanban.peering: kanban.peering.api.md
