@@ -11,7 +11,7 @@ cd "$repo_root"
 scan_paths=(
   .github .millstrand bin scripts src test
   Makefile deps.edn README.md AGENTS.md mkdocs.yml spool.edn
-  kanban.md kanban.cookbook.md kanban.api.md kanban.peering.api.md
+  kanban.md kanban.cookbook.md kanban.api.md
   release-exception.md
 )
 

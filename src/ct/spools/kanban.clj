@@ -1548,7 +1548,7 @@
    :owner :millstrand/spools-kanban
    :keys ["kanban/card" "kanban/lane" "kanban/outcome" "kanban/type"
           "kanban/priority" "kanban/source" "kanban/task"
-          "kanban/run-id" "kanban/from" "kanban/abandon-restore-lane"]
+          "kanban/run-id" "kanban/abandon-restore-lane"]
    :doc "Kanban card state attributes written by ct.spools.kanban/add!."})
 
 (def ^:private kanban-label-vocab

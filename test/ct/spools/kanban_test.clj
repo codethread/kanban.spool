@@ -11,7 +11,6 @@
             [millstrand.api.format.alpha :as fmt]
             [millstrand.api.spool.alpha :as spool]
             [ct.spools.kanban :as kanban]
-            [ct.spools.kanban-peering-test]
             [millstrand.test.alpha :as t]))
 
 (defn- public-value [var-sym]
@@ -34,7 +33,7 @@
           :after #{}
           :scope :module}
          (public-value 'kanban-runtime)))
-  (doseq [legacy '[spool contribute reconcile install-peering!]]
+  (doseq [legacy '[spool contribute reconcile]]
     (is (nil? (ns-resolve 'ct.spools.kanban legacy))
         (str legacy " must not remain as a callback or compatibility shim"))))
 
@@ -1179,6 +1178,5 @@
 (defn -main
   "Run the standalone kanban.spool test suite."
   [& _args]
-  (let [summary (clojure.test/run-tests 'ct.spools.kanban-test
-                                        'ct.spools.kanban-peering-test)]
+  (let [summary (clojure.test/run-tests 'ct.spools.kanban-test)]
     (System/exit (if (pos? (+ (:fail summary) (:error summary))) 1 0))))

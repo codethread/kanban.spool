@@ -1,9 +1,6 @@
 {:paths ["src"]
  :aliases
- {:test {;; The Guild example's source root is added directly to the test classpath
-         ;; (sibling-checkout convention, matching the io.millstrand/millstrand
-         ;; :local/root below).
-         :extra-paths ["test" "../millstrand/examples/guild/src"]
+ {:test {:extra-paths ["test"]
          ;; Point this at the Millstrand checkout you want to test against. This repo
          ;; is developed beside millstrand, so the default works for local owner
          ;; checkouts and CI layouts that place the repos as siblings.
