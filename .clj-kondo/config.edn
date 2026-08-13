@@ -1,0 +1,2 @@
+{:config-paths ["imports/io.millstrand/millstrand"
+                "imports/millhouse.spools/workflow"]}

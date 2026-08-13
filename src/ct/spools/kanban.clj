@@ -274,7 +274,7 @@
   [key]
   (symbol key))
 
-(millstrand/defpattern kanban-batch
+(millstrand/defpattern! kanban-batch
   "Create pending feature cards with bodies and depends-on edges.
 
   Input shape: {:items [{:key \"slug\" :title \"Title\" :body \"optional\"
@@ -1567,36 +1567,36 @@
   {:arg-spec kanban-export-arg-spec
    :returns kanban-export-returns})
 
-(millstrand/defop kanban
+(millstrand/defop! kanban
   "Manage the user-facing kanban work board."
   kanban-op-options
   [ctx]
   (dispatch-kanban-op ctx))
 
-(millstrand/defop kanban-export
+(millstrand/defop! kanban-export
   "Return a card's full parent-of subtree with its internal depends-on edges."
   kanban-export-op-options
   [ctx]
   (export-card-op ctx))
 
-(millstrand/defbin kanban-dash
+(millstrand/defbin! kanban-dash
   "Open the interactive Kanban board in the caller's terminal."
   {:executable [:family "bin/kanban-dash"]
    :build ["go" "build" "-C" "scripts/agent-dash" "-o" "kanban-dash" "."]})
 
-(millstrand/defquery kanban-cards
+(millstrand/defquery! kanban-cards
   "Select every Kanban card strand."
   {}
   [:= [:attr "kanban/card"] "true"])
 
-(millstrand/defquery kanban-pending
+(millstrand/defquery! kanban-pending
   "Select active Kanban cards in the pending lane."
   {}
   [:and [:= :state "active"]
    [:= [:attr "kanban/card"] "true"]
    [:= [:attr "kanban/lane"] "pending"]])
 
-(millstrand/defquery kanban-epic-pending
+(millstrand/defquery! kanban-epic-pending
   "Select active pending cards hanging directly under one epic."
   {:usage "strand ready --query kanban-epic-pending --param epic=<id>"}
   {:params [:epic]
@@ -1618,7 +1618,7 @@
   [_context]
   {:closed :kanban})
 
-(lifecycle/defresource kanban-runtime
+(lifecycle/defresource! kanban-runtime
   "Own Kanban vocabulary and runtime-state setup for the module lifetime."
   {:open 'ct.spools.kanban/open-kanban!
    :close 'ct.spools.kanban/close-kanban!})
