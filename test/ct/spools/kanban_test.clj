@@ -17,8 +17,8 @@
   (some-> (ns-resolve 'ct.spools.kanban var-sym) var-get))
 
 (deftest authored-module-exposes-forms-without-legacy-entry-points
-  (is (fn? (public-value 'kanban-op)))
-  (is (fn? (public-value 'kanban-export-op)))
+  (is (fn? (public-value 'kanban)))
+  (is (fn? (public-value 'kanban-export)))
   (is (fn? (public-value 'kanban-batch)))
   (is (= {:name "kanban-dash"
           :doc "Open the interactive Kanban board in the caller's terminal."
@@ -90,11 +90,16 @@
              (filter #(= 'ct.spools.kanban (:provenance %)))
              (map (juxt :name identity))
              (into (sorted-map)))
+   :bins (->> (:bins (weaver/op! rt 'bins ["list"]))
+              (filter #(= "kanban-dash" (:name %)))
+              (mapv #(select-keys % [:name :executable :build :provenance])))
    :patterns (->> (patterns/patterns rt)
                   (filter #(= "kanban-batch" (:name %)))
                   vec)
    :queries (select-keys (graph/queries rt)
-                         ["kanban-cards" "kanban-pending" "kanban-epic-pending"])})
+                         ["kanban-cards" "kanban-pending" "kanban-epic-pending"])
+   :lifecycle (get-in (runtime/status rt)
+                      [:lifecycle/outcomes :kanban :kanban-runtime])})
 
 (deftest source-and-image-activation-publish-the-same-kanban-surface
   (t/run-with-weaver-world
@@ -111,9 +116,11 @@
        (is (= source-surface image-surface)
            "image replay publishes the normalized source declaration record")
        (is (= #{"kanban" "kanban-export"} (set (keys (:ops source-surface)))))
+       (is (= ["kanban-dash"] (mapv :name (:bins source-surface))))
        (is (= ["kanban-batch"] (mapv :name (:patterns source-surface))))
        (is (= #{"kanban-cards" "kanban-pending" "kanban-epic-pending"}
-              (set (keys (:queries source-surface)))))))))
+              (set (keys (:queries source-surface)))))
+       (is (= :applied (get-in source-surface [:lifecycle :status])))))))
 
 (deftest omitting-kanban-retracts-static-entries-and-closes-its-resource
   (let [init-source
